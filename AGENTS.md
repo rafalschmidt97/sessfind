@@ -1,5 +1,20 @@
 # Guidelines for AI assistants and contributors
 
+## Personal fork workflow
+
+When `origin` is `rafalschmidt97/sessfind`, work directly in this fork for
+local iteration. Branches, PRs, Jira keys, upstream SDD issues, generated
+tasks, and spec-repository approval are optional. This overrides the SDD,
+product-clarification, and completion-authority requirements below for fork
+work. Clarify ambiguous product decisions with the user. Automatically commit
+each completed, verified change, including related documentation, directly on
+this fork's `main`. Stage only the task's changes. The user has given standing
+authorization for these commits; push only when explicitly requested.
+Keep Conventional Commits, documentation, and verification
+guidance below. The upstream SDD workflow applies when contributing upstream.
+
+For the local command setup and rebuild loop, see README's "Local fork development".
+
 ## Product specification and SDD
 
 The product contract for `sessfind` lives in the `letsdev-it/sdd-specs`

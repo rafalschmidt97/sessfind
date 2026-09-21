@@ -121,11 +121,11 @@ fn draw_banner(f: &mut Frame, app: &App, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            format!(" v{}", env!("CARGO_PKG_VERSION")),
+            format!(" v{} [local fork]", env!("CARGO_PKG_VERSION")),
             Style::default().fg(Color::DarkGray),
         ),
         Span::styled(
-            "  https://letsdev.it | github.com/letsdev-it/sessfind",
+            "  github.com/rafalschmidt97/sessfind",
             Style::default().fg(Color::DarkGray),
         ),
     ]));

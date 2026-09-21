@@ -52,6 +52,24 @@ cargo install sessfind
 
 Requires Rust **1.88+**. See [Installation docs](https://letsdev-it.github.io/sessfind/getting-started/installation/) for prebuilt binaries and other options.
 
+## Local fork development
+
+This checkout is the personal fork at `https://github.com/rafalschmidt97/sessfind`.
+The TUI banner marks it as `[local fork]` and links to this fork's GitHub repository.
+On this machine, `~/.cargo/bin/sessfind` links to
+`~/Developer/personal/sessfind/target/debug/sessfind` instead of a Cargo-installed copy.
+
+After editing, rebuild from the checkout:
+
+```bash
+cargo build --locked -p sessfind --bin sessfind
+sessfind --version
+```
+
+The incremental development build is immediately available through `sessfind`
+in any directory. No reinstall or PR is needed. Rebuild after `cargo clean`
+before using the linked command.
+
 ## Quick Start
 
 ```bash
