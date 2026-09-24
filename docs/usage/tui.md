@@ -5,7 +5,12 @@
 ```bash
 sessfind            # launch TUI
 sessfind --index    # index all sources first, then launch TUI
+sessfind --index-in-background  # launch now and refresh while using the TUI
 ```
+
+Background indexing starts a separate process, so it can finish after the TUI
+closes. The status bar shows progress and reloads the session list when indexing
+finishes while the TUI is open.
 
 ## Pane Layout
 

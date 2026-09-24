@@ -82,7 +82,9 @@ sessfind index
 sessfind
 ```
 
-Combine both: `sessfind --index`. See [Quick Start docs](https://letsdev-it.github.io/sessfind/getting-started/quick-start/) for more.
+Use `sessfind --index-in-background` to open the TUI immediately and refresh its
+catalog in the background on every launch. Use `sessfind --index` when the TUI
+must wait for a complete refresh. See [Quick Start docs](https://letsdev-it.github.io/sessfind/getting-started/quick-start/) for more.
 
 ## LLM data use
 

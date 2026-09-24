@@ -79,6 +79,24 @@ fn index_unknown_source() {
         .stderr(predicate::str::contains("Unknown source"));
 }
 
+#[test]
+fn background_index_flag_is_documented() {
+    sessfind()
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--index-in-background"));
+}
+
+#[test]
+fn foreground_and_background_index_flags_conflict() {
+    sessfind()
+        .args(["--index", "--index-in-background"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be used with"));
+}
+
 // ── Search ──
 
 #[test]

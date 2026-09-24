@@ -141,11 +141,14 @@ pub struct App<'a> {
     pub help_scroll: usize,
     pub update_rx: mpsc::Receiver<Option<String>>,
     pub latest_version: Option<String>,
+    pub background_indexing: bool,
+    pub background_index_message: Option<String>,
     engine: &'a IndexEngine,
     all_chunks: Vec<SearchResult>,
     cached_session_key: Option<(Source, String)>,
     pending_search: Option<PendingSearch>,
     search_debounce: SearchDebounce,
+    background_index: Option<mpsc::Receiver<Result<(), String>>>,
 }
 
 impl<'a> App<'a> {
@@ -155,7 +158,11 @@ impl<'a> App<'a> {
         grouped
     }
 
-    pub fn new(engine: &'a IndexEngine, initial_mode: Option<&str>) -> anyhow::Result<Self> {
+    pub fn new(
+        engine: &'a IndexEngine,
+        initial_mode: Option<&str>,
+        background_index: Option<mpsc::Receiver<Result<(), String>>>,
+    ) -> anyhow::Result<Self> {
         let mut all_chunks = engine.list_all_chunks()?;
         let metadata = crate::metadata::MetadataStore::open(&crate::config::metadata_db_path())?;
         crate::commands::apply_custom_names(&metadata, &mut all_chunks)?;
@@ -213,11 +220,14 @@ impl<'a> App<'a> {
             help_scroll: 0,
             update_rx,
             latest_version: None,
+            background_indexing: background_index.is_some(),
+            background_index_message: None,
             engine,
             all_chunks,
             cached_session_key: None,
             pending_search: None,
             search_debounce: SearchDebounce::default(),
+            background_index,
         };
 
         app.load_detail();
@@ -395,6 +405,68 @@ impl<'a> App<'a> {
         }
     }
 
+    pub fn poll_background_index(&mut self) {
+        let result = match self.background_index.as_ref() {
+            Some(receiver) => match receiver.try_recv() {
+                Ok(result) => Some(result),
+                Err(mpsc::TryRecvError::Disconnected) => Some(Err(
+                    "background indexing stopped without reporting a result".into(),
+                )),
+                Err(mpsc::TryRecvError::Empty) => None,
+            },
+            None => None,
+        };
+        let Some(result) = result else {
+            return;
+        };
+
+        self.background_index = None;
+        self.background_indexing = false;
+        match result {
+            Ok(()) => match self.refresh_catalog() {
+                Ok(()) => self.background_index_message = Some("index updated".into()),
+                Err(error) => {
+                    self.background_index_message = Some(format!("index refresh failed: {error}"))
+                }
+            },
+            Err(error) => self.background_index_message = Some(error),
+        }
+    }
+
+    fn refresh_catalog(&mut self) -> anyhow::Result<()> {
+        let selected_key = self
+            .results
+            .get(self.selected)
+            .map(|result| (result.source, result.session_id.clone()));
+        let mut chunks = self.engine.list_all_chunks()?;
+        let store = crate::metadata::MetadataStore::open(&crate::config::metadata_db_path())?;
+        crate::commands::apply_custom_names(&store, &mut chunks)?;
+        self.all_chunks = chunks;
+        self.freshness_warnings = freshness_warnings(self.engine)?;
+        self.cached_session_key = None;
+
+        if self.input.is_empty() {
+            self.results = dedup_by_session(&self.all_chunks, self.sort_order);
+        } else {
+            match self.search_mode().clone() {
+                SearchMode::Fts => self.search_fts(),
+                SearchMode::Fuzzy => self.search_fuzzy(),
+                SearchMode::Semantic | SearchMode::Llm(_) => {}
+            }
+        }
+
+        self.selected = selected_key
+            .and_then(|key| {
+                self.results
+                    .iter()
+                    .position(|result| result.source == key.0 && result.session_id == key.1)
+            })
+            .unwrap_or(0)
+            .min(self.results.len().saturating_sub(1));
+        self.load_detail();
+        Ok(())
+    }
+
     fn search_fts(&mut self) {
         let params = SearchParams {
             query: self.input.clone(),
@@ -528,6 +600,10 @@ impl<'a> App<'a> {
     }
 
     pub fn reindex_selected_source(&mut self) {
+        if self.background_indexing {
+            self.background_index_message = Some("background indexing is already running".into());
+            return;
+        }
         let Some(selected) = self.results.get(self.selected) else {
             return;
         };

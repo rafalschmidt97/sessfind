@@ -15,6 +15,8 @@ mod watcher;
 use anyhow::Result;
 use chrono::{Local, NaiveDate, TimeZone, Utc};
 use clap::{Parser, Subcommand};
+use std::process::Stdio;
+use std::sync::mpsc;
 
 use crate::indexer::engine::{IndexEngine, SearchParams};
 use crate::models::Source;
@@ -31,8 +33,11 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
     /// Index all sources before launching TUI
-    #[arg(long)]
+    #[arg(long, conflicts_with = "index_in_background")]
     index: bool,
+    /// Launch TUI immediately and update the index in the background
+    #[arg(long)]
+    index_in_background: bool,
     /// Initial search mode for TUI (fts, fuzzy, semantic, llm)
     #[arg(long, short = 'm')]
     mode: Option<String>,
@@ -302,6 +307,26 @@ fn parse_date(s: &str, end_of_day: bool) -> Result<chrono::DateTime<Utc>> {
     Ok(local.with_timezone(&Utc))
 }
 
+fn start_background_index() -> Result<mpsc::Receiver<Result<(), String>>> {
+    let executable = std::env::current_exe()?;
+    let mut child = std::process::Command::new(executable)
+        .arg("index")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let result = match child.wait() {
+            Ok(status) if status.success() => Ok(()),
+            Ok(status) => Err(format!("background indexing exited with {status}")),
+            Err(error) => Err(format!("failed to wait for background indexing: {error}")),
+        };
+        let _ = sender.send(result);
+    });
+    Ok(receiver)
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let data_dir = config::data_dir();
@@ -317,7 +342,7 @@ fn main() -> Result<()> {
             let engine = open_engine()?;
             // Index before launching TUI if requested or if opening the
             // catalog recovered from a stale index/state mismatch.
-            if cli.index || engine.requires_reindex() {
+            if cli.index || (engine.requires_reindex() && !cli.index_in_background) {
                 if engine.requires_reindex() && !cli.index {
                     eprintln!("Rebuilding session catalog after index recovery…");
                 }
@@ -333,8 +358,13 @@ fn main() -> Result<()> {
                     eprintln!("Warning: semantic indexing failed: {error}");
                 }
             }
+            let background_index = if cli.index_in_background {
+                Some(start_background_index()?)
+            } else {
+                None
+            };
             // Launch TUI
-            if let Some(resume) = tui::run(&engine, cli.mode.as_deref())? {
+            if let Some(resume) = tui::run(&engine, cli.mode.as_deref(), background_index)? {
                 exec_resume(&resume)?;
             }
             return Ok(());

@@ -3,6 +3,7 @@ mod input;
 mod ui;
 
 use std::io::stdout;
+use std::sync::mpsc;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -25,9 +26,13 @@ fn handles_key_kind(kind: event::KeyEventKind) -> bool {
     )
 }
 
-pub fn run(engine: &IndexEngine, initial_mode: Option<&str>) -> Result<Option<ResumeCommand>> {
+pub fn run(
+    engine: &IndexEngine,
+    initial_mode: Option<&str>,
+    background_index: Option<mpsc::Receiver<Result<(), String>>>,
+) -> Result<Option<ResumeCommand>> {
     // Validate catalog and initial mode before taking control of the terminal.
-    let mut app = app::App::new(engine, initial_mode)?;
+    let mut app = app::App::new(engine, initial_mode, background_index)?;
 
     // Setup terminal
     enable_raw_mode()?;
@@ -42,6 +47,7 @@ pub fn run(engine: &IndexEngine, initial_mode: Option<&str>) -> Result<Option<Re
 
         app.poll_debounced_search();
         app.poll_pending_search();
+        app.poll_background_index();
 
         if let Ok(Some(ver)) = app.update_rx.try_recv()
             && ver != env!("CARGO_PKG_VERSION")

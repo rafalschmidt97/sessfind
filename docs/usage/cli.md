@@ -14,6 +14,16 @@ When indexing all sources, every source is attempted. Successful updates are
 kept even if another source fails, and the command exits non-zero after
 reporting all failures.
 
+To launch the TUI immediately and refresh its catalog in a separate background
+process, use:
+
+```bash
+sessfind --index-in-background
+```
+
+The existing `sessfind --index` waits for indexing to finish before opening the
+TUI. The two flags cannot be combined.
+
 ## Search from CLI (non-interactive)
 
 ```bash

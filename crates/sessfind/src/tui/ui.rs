@@ -621,6 +621,17 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(Color::Yellow),
         ));
     }
+    if app.background_indexing {
+        spans.push(Span::styled(
+            "  indexing...",
+            Style::default().fg(ACCENT_ORANGE),
+        ));
+    } else if let Some(message) = &app.background_index_message {
+        spans.push(Span::styled(
+            format!("  {message}"),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
 
     let status = Line::from(spans);
     let bar = Paragraph::new(status).style(Style::default().bg(Color::Black));

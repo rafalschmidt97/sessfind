@@ -35,7 +35,18 @@ View logs with `journalctl --user -u sessfind-watch -f`.
 
 ---
 
-## Option 2: `--index` flag
+## Option 2: Background indexing on launch (recommended for TUI use)
+
+Open the existing catalog immediately and refresh it in the background:
+
+```bash
+sessfind --index-in-background
+```
+
+The status bar shows indexing progress and refreshes the open TUI when the new
+catalog is ready. The indexing process can finish even if you close the TUI.
+
+## Option 3: Blocking `--index` flag
 
 Index right before launching the TUI:
 
@@ -50,7 +61,7 @@ Good enough if you always search via the TUI.
 
 ---
 
-## Option 3: Shell hook (index on terminal start)
+## Option 4: Shell hook (index on terminal start)
 
 Add one line to your shell config to index in the background every time you open a terminal:
 
@@ -76,7 +87,7 @@ The incremental index is fast (milliseconds when nothing changed), so you won't 
 
 ---
 
-## Option 4: Cron / scheduled task
+## Option 5: Cron / scheduled task
 
 Run indexing on a fixed schedule (e.g. every 10 minutes):
 
@@ -136,6 +147,7 @@ systemctl --user enable --now sessfind-index.timer
 | Method | Latency | Setup | Always-on |
 |--------|---------|-------|-----------|
 | `sessfind watch` | ~5 seconds | `sessfind watch install` | ✓ (service) |
+| `--index-in-background` | TUI opens immediately | None | ✗ |
 | `--index` flag | Before each TUI launch | None | ✗ |
 | Shell hook | On terminal open | One line in rc file | ✗ |
 | Cron | 1–10 minutes | `crontab -e` | ✓ |

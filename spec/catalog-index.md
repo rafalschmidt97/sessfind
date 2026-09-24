@@ -38,6 +38,11 @@ The watcher uses the same reconciliation path. Any additions, updates, or
 removals also trigger semantic-index refresh when the semantic plugin is
 available.
 
+The TUI can launch with `--index-in-background`. It opens the current catalog,
+starts a separate `sessfind index` process, and refreshes its in-memory session
+list when that process completes. The child process may finish after the TUI
+exits. `--index` retains its blocking behavior, and the two flags conflict.
+
 ## Search result boundary
 
 Public search commands return at most one result per source-qualified session,
