@@ -3,6 +3,7 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 
@@ -17,6 +18,38 @@ type PendingSearch = (
     mpsc::Receiver<anyhow::Result<Vec<SearchResult>>>,
     Arc<AtomicBool>,
 );
+
+const INSTANT_SEARCH_DEBOUNCE: Duration = Duration::from_secs(1);
+
+#[derive(Default)]
+struct SearchDebounce {
+    deadline: Option<Instant>,
+}
+
+impl SearchDebounce {
+    fn schedule(&mut self, now: Instant) {
+        self.deadline = Some(now + INSTANT_SEARCH_DEBOUNCE);
+    }
+
+    fn cancel(&mut self) {
+        self.deadline = None;
+    }
+
+    fn defer_if_pending(&mut self, now: Instant) {
+        if self.deadline.is_some() {
+            self.schedule(now);
+        }
+    }
+
+    fn take_due(&mut self, now: Instant) -> bool {
+        if self.deadline.is_some_and(|deadline| now >= deadline) {
+            self.deadline = None;
+            true
+        } else {
+            false
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum SearchMode {
@@ -112,6 +145,7 @@ pub struct App<'a> {
     all_chunks: Vec<SearchResult>,
     cached_session_key: Option<(Source, String)>,
     pending_search: Option<PendingSearch>,
+    search_debounce: SearchDebounce,
 }
 
 impl<'a> App<'a> {
@@ -183,6 +217,7 @@ impl<'a> App<'a> {
             all_chunks,
             cached_session_key: None,
             pending_search: None,
+            search_debounce: SearchDebounce::default(),
         };
 
         app.load_detail();
@@ -200,16 +235,43 @@ impl<'a> App<'a> {
         self.detail_scroll = 0;
 
         if self.input.is_empty() {
+            self.search_debounce.cancel();
             self.results = dedup_by_session(&self.all_chunks, self.sort_order);
+            self.load_detail();
         } else {
             match self.search_mode().clone() {
-                SearchMode::Fts => self.search_fts(),
-                SearchMode::Fuzzy => self.search_fuzzy(),
+                SearchMode::Fts | SearchMode::Fuzzy => {
+                    self.search_debounce.schedule(Instant::now());
+                }
                 // Deferred modes: don't search on every keystroke (triggered via Enter)
-                SearchMode::Semantic | SearchMode::Llm(_) => {}
+                SearchMode::Semantic | SearchMode::Llm(_) => self.search_debounce.cancel(),
             }
         }
+    }
 
+    pub fn poll_debounced_search(&mut self) {
+        if self.search_debounce.take_due(Instant::now()) {
+            self.run_instant_search();
+        }
+    }
+
+    pub fn on_cursor_moved(&mut self) {
+        self.search_debounce.defer_if_pending(Instant::now());
+    }
+
+    pub fn flush_debounced_search(&mut self) {
+        self.search_debounce.cancel();
+        if !self.input.is_empty() {
+            self.run_instant_search();
+        }
+    }
+
+    fn run_instant_search(&mut self) {
+        match self.search_mode().clone() {
+            SearchMode::Fts => self.search_fts(),
+            SearchMode::Fuzzy => self.search_fuzzy(),
+            SearchMode::Semantic | SearchMode::Llm(_) => return,
+        }
         self.load_detail();
     }
 
@@ -627,5 +689,61 @@ mod tests {
     #[test]
     fn search_mode_semantic_label() {
         assert_eq!(SearchMode::Semantic.label(), "Semantic");
+    }
+
+    #[test]
+    fn search_debounce_waits_for_one_second_of_inactivity() {
+        let start = Instant::now();
+        let mut debounce = SearchDebounce::default();
+
+        debounce.schedule(start);
+        assert!(!debounce.take_due(start + Duration::from_millis(999)));
+        assert!(debounce.take_due(start + Duration::from_secs(1)));
+        assert!(!debounce.take_due(start + Duration::from_secs(2)));
+    }
+
+    #[test]
+    fn search_debounce_resets_after_each_input_change() {
+        let start = Instant::now();
+        let mut debounce = SearchDebounce::default();
+
+        debounce.schedule(start);
+        debounce.schedule(start + Duration::from_millis(750));
+
+        assert!(!debounce.take_due(start + Duration::from_secs(1)));
+        assert!(debounce.take_due(start + Duration::from_millis(1750)));
+    }
+
+    #[test]
+    fn search_debounce_can_be_cancelled() {
+        let start = Instant::now();
+        let mut debounce = SearchDebounce::default();
+
+        debounce.schedule(start);
+        debounce.cancel();
+
+        assert!(!debounce.take_due(start + Duration::from_secs(2)));
+    }
+
+    #[test]
+    fn search_debounce_defers_pending_search_for_cursor_movement() {
+        let start = Instant::now();
+        let mut debounce = SearchDebounce::default();
+
+        debounce.schedule(start);
+        debounce.defer_if_pending(start + Duration::from_millis(750));
+
+        assert!(!debounce.take_due(start + Duration::from_secs(1)));
+        assert!(debounce.take_due(start + Duration::from_millis(1750)));
+    }
+
+    #[test]
+    fn cursor_movement_does_not_schedule_a_new_search() {
+        let start = Instant::now();
+        let mut debounce = SearchDebounce::default();
+
+        debounce.defer_if_pending(start);
+
+        assert!(!debounce.take_due(start + Duration::from_secs(2)));
     }
 }

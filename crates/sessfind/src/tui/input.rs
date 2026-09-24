@@ -106,12 +106,17 @@ fn handle_search_key(app: &mut App, key: KeyEvent) {
             app.cursor_pos = prev;
             app.on_input_changed();
         }
+        KeyCode::Delete if app.cursor_pos < app.input.len() => {
+            app.input.remove(app.cursor_pos);
+            app.on_input_changed();
+        }
         KeyCode::Left if app.cursor_pos > 0 => {
             app.cursor_pos = app.input[..app.cursor_pos]
                 .char_indices()
                 .last()
                 .map(|(i, _)| i)
                 .unwrap_or(0);
+            app.on_cursor_moved();
         }
         KeyCode::Right if app.cursor_pos < app.input.len() => {
             app.cursor_pos = app.input[app.cursor_pos..]
@@ -119,6 +124,7 @@ fn handle_search_key(app: &mut App, key: KeyEvent) {
                 .nth(1)
                 .map(|(i, _)| app.cursor_pos + i)
                 .unwrap_or(app.input.len());
+            app.on_cursor_moved();
         }
         KeyCode::Enter => {
             // Deferred modes: Enter triggers the search
@@ -128,9 +134,12 @@ fn handle_search_key(app: &mut App, key: KeyEvent) {
                 } else {
                     app.request_semantic_search();
                 }
-            } else if !app.results.is_empty() {
-                app.results_pane = ResultsPane::List;
-                app.focus = Focus::Results;
+            } else {
+                app.flush_debounced_search();
+                if !app.results.is_empty() {
+                    app.results_pane = ResultsPane::List;
+                    app.focus = Focus::Results;
+                }
             }
         }
         _ => {}

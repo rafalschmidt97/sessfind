@@ -18,6 +18,13 @@ use crate::indexer::engine::IndexEngine;
 
 pub use sessfind_common::CommandSpec as ResumeCommand;
 
+fn handles_key_kind(kind: event::KeyEventKind) -> bool {
+    matches!(
+        kind,
+        event::KeyEventKind::Press | event::KeyEventKind::Repeat
+    )
+}
+
 pub fn run(engine: &IndexEngine, initial_mode: Option<&str>) -> Result<Option<ResumeCommand>> {
     // Validate catalog and initial mode before taking control of the terminal.
     let mut app = app::App::new(engine, initial_mode)?;
@@ -33,6 +40,7 @@ pub fn run(engine: &IndexEngine, initial_mode: Option<&str>) -> Result<Option<Re
     loop {
         terminal.draw(|f| ui::draw(f, &mut app))?;
 
+        app.poll_debounced_search();
         app.poll_pending_search();
 
         if let Ok(Some(ver)) = app.update_rx.try_recv()
@@ -44,8 +52,8 @@ pub fn run(engine: &IndexEngine, initial_mode: Option<&str>) -> Result<Option<Re
         if event::poll(Duration::from_millis(50))? {
             match event::read()? {
                 Event::Key(key)
-                    // Ignore key release events on some terminals
-                    if key.kind == crossterm::event::KeyEventKind::Press =>
+                    // Handle presses and held-key repeats, but ignore releases.
+                    if handles_key_kind(key.kind) =>
                 {
                     input::handle_key(&mut app, key);
                 }
@@ -67,4 +75,16 @@ pub fn run(engine: &IndexEngine, initial_mode: Option<&str>) -> Result<Option<Re
     stdout().execute(LeaveAlternateScreen)?;
 
     Ok(app.resume_command())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn handles_pressed_and_held_keys_but_not_releases() {
+        assert!(handles_key_kind(event::KeyEventKind::Press));
+        assert!(handles_key_kind(event::KeyEventKind::Repeat));
+        assert!(!handles_key_kind(event::KeyEventKind::Release));
+    }
 }

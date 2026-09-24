@@ -23,7 +23,9 @@
 ## Features
 
 - Full-text search (BM25 ranking via tantivy) across all your sessions
+- Top-level sessions only — internal subagent calls are excluded
 - Interactive TUI with split-pane layout, real-time filtering, and session preview
+- Debounced interactive filtering keeps typing and held-key editing responsive
 - **VS Code extension** — browse, search, tag and resume sessions from a sidebar hub ([details](docs/usage/vscode.md))
 - Fuzzy substring matching as alternative search mode
 - **Semantic search** — find conceptually similar sessions using ML embeddings (optional plugin)

@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use chrono::{TimeZone, Utc};
 use rusqlite::Connection;
+use std::path::Path;
 
 use crate::config;
 use crate::models::{Message, Role, Session, Source};
@@ -12,6 +13,64 @@ impl OpenCodeSource {
     pub fn new() -> Self {
         Self
     }
+}
+
+fn list_sessions_from_connection(conn: &Connection, db_path: &Path) -> Result<Vec<Session>> {
+    let mut stmt = conn.prepare(
+        "SELECT s.id, s.title, s.directory, s.time_created, s.time_updated,
+                p.name as project_name
+         FROM session s
+         LEFT JOIN project p ON s.project_id = p.id
+         WHERE s.parent_id IS NULL
+         ORDER BY s.time_created DESC",
+    )?;
+
+    let sessions = stmt
+        .query_map([], |row| {
+            let id: String = row.get(0)?;
+            let title: Option<String> = row.get(1)?;
+            let directory: Option<String> = row.get(2)?;
+            let time_created: i64 = row.get(3)?;
+            let time_updated: i64 = row.get(4)?;
+            let project_name: Option<String> = row.get(5)?;
+
+            Ok((
+                id,
+                title,
+                directory,
+                time_created,
+                time_updated,
+                project_name,
+            ))
+        })?
+        .filter_map(|r| r.ok())
+        .map(
+            |(id, title, directory, time_created, time_updated, project_name)| {
+                let started_at = Utc
+                    .timestamp_millis_opt(time_created)
+                    .single()
+                    .unwrap_or_else(Utc::now);
+                let dir = directory.clone().unwrap_or_default();
+                let project = project_name.unwrap_or_else(|| dir.clone());
+
+                Session {
+                    source: Source::OpenCode,
+                    session_id: id,
+                    project,
+                    directory: dir,
+                    title,
+                    started_at,
+                    model: None,
+                    file_path: db_path.to_string_lossy().to_string(),
+                    // Use time_updated as pseudo-mtime for change detection
+                    file_mtime: time_updated / 1000,
+                    file_size: time_updated as u64,
+                }
+            },
+        )
+        .collect();
+
+    Ok(sessions)
 }
 
 impl SessionSource for OpenCodeSource {
@@ -29,60 +88,7 @@ impl SessionSource for OpenCodeSource {
             Connection::open_with_flags(&db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
                 .with_context(|| format!("Failed to open OpenCode DB: {}", db_path.display()))?;
 
-        let mut stmt = conn.prepare(
-            "SELECT s.id, s.title, s.directory, s.time_created, s.time_updated,
-                    p.name as project_name
-             FROM session s
-             LEFT JOIN project p ON s.project_id = p.id
-             ORDER BY s.time_created DESC",
-        )?;
-
-        let sessions = stmt
-            .query_map([], |row| {
-                let id: String = row.get(0)?;
-                let title: Option<String> = row.get(1)?;
-                let directory: Option<String> = row.get(2)?;
-                let time_created: i64 = row.get(3)?;
-                let time_updated: i64 = row.get(4)?;
-                let project_name: Option<String> = row.get(5)?;
-
-                Ok((
-                    id,
-                    title,
-                    directory,
-                    time_created,
-                    time_updated,
-                    project_name,
-                ))
-            })?
-            .filter_map(|r| r.ok())
-            .map(
-                |(id, title, directory, time_created, time_updated, project_name)| {
-                    let started_at = Utc
-                        .timestamp_millis_opt(time_created)
-                        .single()
-                        .unwrap_or_else(Utc::now);
-                    let dir = directory.clone().unwrap_or_default();
-                    let project = project_name.unwrap_or_else(|| dir.clone());
-
-                    Session {
-                        source: Source::OpenCode,
-                        session_id: id,
-                        project,
-                        directory: dir,
-                        title,
-                        started_at,
-                        model: None,
-                        file_path: db_path.to_string_lossy().to_string(),
-                        // Use time_updated as pseudo-mtime for change detection
-                        file_mtime: time_updated / 1000,
-                        file_size: time_updated as u64,
-                    }
-                },
-            )
-            .collect();
-
-        Ok(sessions)
+        list_sessions_from_connection(&conn, &db_path)
     }
 
     fn load_messages(&self, session: &Session) -> Result<Vec<Message>> {
@@ -152,5 +158,41 @@ impl SessionSource for OpenCodeSource {
         }
 
         Ok(messages)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn list_sessions_excludes_child_sessions_by_parent_id() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT);
+             CREATE TABLE session (
+                 id TEXT PRIMARY KEY,
+                 title TEXT,
+                 directory TEXT,
+                 time_created INTEGER NOT NULL,
+                 time_updated INTEGER NOT NULL,
+                 project_id TEXT,
+                 parent_id TEXT
+             );
+             INSERT INTO project (id, name) VALUES ('project', 'Example');
+             INSERT INTO session VALUES
+                 ('root', 'Root session', '/repo', 1000, 2000, 'project', NULL),
+                 ('root-with-subagent-title', 'Looks like (@general subagent)', '/repo', 2000, 3000, 'project', NULL),
+                 ('child', 'Title does not identify a subagent', '/repo', 3000, 4000, 'project', 'root');",
+        )
+        .unwrap();
+
+        let sessions = list_sessions_from_connection(&conn, Path::new("opencode.db")).unwrap();
+        let ids: Vec<_> = sessions
+            .iter()
+            .map(|session| session.session_id.as_str())
+            .collect();
+
+        assert_eq!(ids, vec!["root-with-subagent-title", "root"]);
     }
 }

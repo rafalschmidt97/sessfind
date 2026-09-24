@@ -21,7 +21,7 @@ The TUI opens in full-screen mode with three areas:
 
 | Key | Action |
 |-----|--------|
-| *Type* | Filter sessions in real-time |
+| *Type / Backspace / Delete* | Filter sessions after a one-second pause in editing |
 | `Tab` | Switch focus between search and results |
 | `Shift+Tab` | Toggle search mode (FTS / Fuzzy / LLM / Semantic*) |
 | `Ctrl+S` | Toggle sort order (Newest first / Best match) |
@@ -66,3 +66,8 @@ All dates in the TUI are displayed in your computer's local timezone.
 Search failures are shown separately from an empty result set and keep the
 previous successful results visible. The status bar and preview also warn when
 a source is stale or failed; press `r` in the preview pane to retry that source.
+
+Full-text and fuzzy searches wait until input has been unchanged for one second,
+so typing, cursor movement, and held Backspace remain responsive. Press `Enter`
+to run a pending search immediately. Semantic and LLM searches remain
+Enter-triggered.
