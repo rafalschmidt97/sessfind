@@ -39,6 +39,16 @@ sessfind search "how to handle authentication" --method semantic
 sessfind search "how to handle authentication" --method llm
 ```
 
+Plain multiword FTS queries require every word in any order. Use uppercase
+`OR` for a broader match and include literal quote characters for an adjacent
+phrase. From a shell, preserve those quotes with outer single quotes:
+
+```bash
+sessfind search "pull request"          # pull AND request
+sessfind search "pull OR request"       # either word
+sessfind search '"pull request"'        # adjacent phrase
+```
+
 ## Show full session content
 
 ```bash

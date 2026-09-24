@@ -484,7 +484,12 @@ fn main() -> Result<()> {
             };
 
             let store = open_metadata()?;
-            results.extend(commands::metadata_search_matches(&engine, &store, &params)?);
+            results.extend(commands::metadata_search_matches(
+                &engine,
+                &store,
+                &params,
+                method == "fts",
+            )?);
             commands::apply_custom_names(&store, &mut results)?;
             let results = dedup_by_session(&results, SortOrder::ScoreDesc);
             commands::print_search_results(&results, limit, json)?;

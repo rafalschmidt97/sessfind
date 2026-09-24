@@ -768,22 +768,42 @@ fn parse_fts_user_query(index: &Index, text_field: Field, query: &str) -> Result
     });
 
     if !has_star {
-        let qp = QueryParser::for_index(index, vec![text_field]);
+        let mut qp = QueryParser::for_index(index, vec![text_field]);
+        if crate::search::terms_require_all(query) {
+            qp.set_conjunction_by_default();
+        }
         return Ok(Box::new(qp.parse_query(query)?));
     }
 
     // Build boolean query mixing prefix regexes with normal terms.
     let qp = QueryParser::for_index(index, vec![text_field]);
     let mut subs: Vec<(Occur, Box<dyn Query>)> = Vec::new();
+    let default_occur = if tokens.contains(&"AND") {
+        Occur::Must
+    } else {
+        Occur::Should
+    };
+    let mut exclude_next = false;
 
     for raw in &tokens {
+        match *raw {
+            "AND" | "OR" => continue,
+            "NOT" => {
+                exclude_next = true;
+                continue;
+            }
+            _ => {}
+        }
         let (occur, body) = if let Some(rest) = raw.strip_prefix('+') {
             (Occur::Must, rest)
         } else if let Some(rest) = raw.strip_prefix('-') {
             (Occur::MustNot, rest)
+        } else if exclude_next {
+            (Occur::MustNot, *raw)
         } else {
-            (Occur::Should, *raw)
+            (default_occur, *raw)
         };
+        exclude_next = false;
 
         if body.ends_with('*') && body.len() > 1 && !body.starts_with('"') {
             let base = &body[..body.len() - 1];
@@ -950,6 +970,29 @@ mod tests {
         let searcher = reader.searcher();
         let results = searcher.search(&q, &TopDocs::with_limit(10)).unwrap();
         assert!(!results.is_empty(), "runs should match running via stemmer");
+    }
+
+    #[test]
+    fn plain_multiword_query_requires_all_terms() {
+        let (index, _, text_field) = make_test_index();
+        let reader = index.reader().unwrap();
+        let searcher = reader.searcher();
+
+        let query = parse_fts_user_query(&index, text_field, "hello missing").unwrap();
+        assert_eq!(searcher.search(&query, &Count).unwrap(), 0);
+
+        let query = parse_fts_user_query(&index, text_field, "hello OR missing").unwrap();
+        assert_eq!(searcher.search(&query, &Count).unwrap(), 1);
+    }
+
+    #[test]
+    fn prefix_query_supports_explicit_or() {
+        let (index, _, text_field) = make_test_index();
+        let reader = index.reader().unwrap();
+        let searcher = reader.searcher();
+
+        let query = parse_fts_user_query(&index, text_field, "missing OR hel*").unwrap();
+        assert_eq!(searcher.search(&query, &Count).unwrap(), 1);
     }
 
     #[test]

@@ -9,7 +9,7 @@ product-clarification, and completion-authority requirements below for fork
 work. Clarify ambiguous product decisions with the user. Automatically commit
 each completed, verified change, including related documentation, directly on
 this fork's `main`. Stage only the task's changes. The user has given standing
-authorization for these commits; push only when explicitly requested.
+authorization for these commits and pushes to `origin/main`.
 Keep Conventional Commits, documentation, and verification
 guidance below. The upstream SDD workflow applies when contributing upstream.
 

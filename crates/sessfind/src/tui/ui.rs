@@ -682,11 +682,11 @@ fn draw_help_popup(f: &mut Frame, area: Rect, scroll: usize) {
             Style::default().fg(Color::Reset),
         )),
         Line::from(Span::styled(
-            "       shopping assistant      any of these words (OR)",
+            "       shopping assistant      all words required (AND)",
             Style::default().fg(Color::Reset),
         )),
         Line::from(Span::styled(
-            "       +shopping +assistant    all words required (AND)",
+            "       +shopping +assistant    explicit all-words form",
             Style::default().fg(Color::Reset),
         )),
         Line::from(Span::styled(
@@ -799,6 +799,10 @@ fn draw_help_popup(f: &mut Frame, area: Rect, scroll: usize) {
         )),
         Line::from(Span::styled(
             "   Alt+Bksp/Del  delete previous/next word in search",
+            Style::default().fg(Color::Reset),
+        )),
+        Line::from(Span::styled(
+            "   Alt+Left/Right or Alt+B/F  move one word in search",
             Style::default().fg(Color::Reset),
         )),
         Line::from(Span::styled(

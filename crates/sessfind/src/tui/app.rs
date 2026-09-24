@@ -364,6 +364,7 @@ impl<'a> App<'a> {
                         &engine,
                         &store,
                         &metadata_params,
+                        false,
                     )?);
                 crate::commands::apply_custom_names(&store, &mut expanded.results)?;
                 Ok(expanded.results)
@@ -520,6 +521,7 @@ impl<'a> App<'a> {
             self.engine,
             &store,
             params,
+            !fuzzy,
         )?);
         crate::commands::apply_custom_names(&store, &mut results)?;
         Ok(results)

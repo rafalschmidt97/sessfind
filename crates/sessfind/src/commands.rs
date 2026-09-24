@@ -306,6 +306,7 @@ pub fn metadata_search_matches(
     engine: &IndexEngine,
     store: &MetadataStore,
     params: &SearchParams,
+    plain_terms_require_all: bool,
 ) -> Result<Vec<SearchResult>> {
     let mut sessions = engine.list_sessions()?;
     if let Some(source) = &params.source {
@@ -335,7 +336,10 @@ pub fn metadata_search_matches(
     let tags = store.tags_for_sessions(&refs)?;
     let project_tags = store.project_tags_map()?;
 
-    let terms = parse_metadata_terms(&params.query);
+    let Some(terms_require_all) = metadata_match_all(&params.query, plain_terms_require_all) else {
+        return Ok(Vec::new());
+    };
+    let terms = parse_metadata_terms(&params.query, plain_terms_require_all);
     let required: Vec<&MetadataTerm> = terms
         .iter()
         .filter(|term| term.occur == MetadataOccur::Required)
@@ -369,9 +373,15 @@ pub fn metadata_search_matches(
             .iter()
             .all(|term| metadata_term_matches(term, &haystack));
         let optional_match = optional.is_empty()
-            || optional
-                .iter()
-                .any(|term| metadata_term_matches(term, &haystack));
+            || if terms_require_all {
+                optional
+                    .iter()
+                    .all(|term| metadata_term_matches(term, &haystack))
+            } else {
+                optional
+                    .iter()
+                    .any(|term| metadata_term_matches(term, &haystack))
+            };
         let excluded_match = excluded
             .iter()
             .any(|term| metadata_term_matches(term, &haystack));
@@ -408,7 +418,7 @@ struct MetadataTerm {
     prefix: bool,
 }
 
-fn parse_metadata_terms(query: &str) -> Vec<MetadataTerm> {
+fn parse_metadata_terms(query: &str, fts_syntax: bool) -> Vec<MetadataTerm> {
     let chars: Vec<char> = query.chars().collect();
     let mut terms = Vec::new();
     let mut index = 0;
@@ -452,6 +462,9 @@ fn parse_metadata_terms(query: &str) -> Vec<MetadataTerm> {
         if prefix {
             value.pop();
         }
+        if fts_syntax && !quoted && crate::search::boolean_operator(&value) {
+            continue;
+        }
         let value = value.to_lowercase();
         if !value.is_empty() {
             terms.push(MetadataTerm {
@@ -462,6 +475,26 @@ fn parse_metadata_terms(query: &str) -> Vec<MetadataTerm> {
         }
     }
     terms
+}
+
+fn metadata_match_all(query: &str, plain_terms_require_all: bool) -> Option<bool> {
+    if !plain_terms_require_all {
+        return Some(false);
+    }
+    let operators: Vec<&str> = query
+        .split_whitespace()
+        .filter(|token| crate::search::boolean_operator(token))
+        .collect();
+    if operators.contains(&"NOT") || (operators.contains(&"AND") && operators.contains(&"OR")) {
+        return None;
+    }
+    if operators.contains(&"AND") {
+        Some(true)
+    } else if operators.contains(&"OR") {
+        Some(false)
+    } else {
+        Some(plain_terms_require_all && crate::search::terms_require_all(query))
+    }
 }
 
 fn metadata_term_matches(term: &MetadataTerm, haystack: &str) -> bool {
@@ -1259,7 +1292,7 @@ mod tests {
 
     #[test]
     fn metadata_terms_preserve_fts_operators_and_phrases() {
-        let terms = parse_metadata_terms(r#"+shopping "exact phrase" -legacy shopp*"#);
+        let terms = parse_metadata_terms(r#"+shopping "exact phrase" -legacy shopp*"#, true);
         assert_eq!(terms.len(), 4);
         assert_eq!(terms[0].occur, MetadataOccur::Required);
         assert_eq!(terms[0].value, "shopping");
@@ -1269,5 +1302,37 @@ mod tests {
         assert_eq!(terms[2].value, "legacy");
         assert!(terms[3].prefix);
         assert!(metadata_term_matches(&terms[3], "a shopping assistant"));
+    }
+
+    #[test]
+    fn metadata_terms_ignore_boolean_operator_keywords() {
+        let terms = parse_metadata_terms("shopping OR assistant", true);
+
+        assert_eq!(terms.len(), 2);
+        assert_eq!(terms[0].value, "shopping");
+        assert_eq!(terms[1].value, "assistant");
+    }
+
+    #[test]
+    fn metadata_boolean_strategy_preserves_simple_operators() {
+        assert_eq!(metadata_match_all("shopping assistant", true), Some(true));
+        assert_eq!(metadata_match_all("shopping assistant", false), Some(false));
+        assert_eq!(
+            metadata_match_all("shopping OR assistant", true),
+            Some(false)
+        );
+        assert_eq!(
+            metadata_match_all("shopping AND assistant", true),
+            Some(true)
+        );
+        assert_eq!(metadata_match_all("shopping NOT assistant", true), None);
+        assert_eq!(
+            metadata_match_all("shopping AND assistant OR cart", true),
+            None
+        );
+        assert_eq!(
+            metadata_match_all("shopping AND assistant", false),
+            Some(false)
+        );
     }
 }

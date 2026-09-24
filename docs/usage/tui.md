@@ -36,6 +36,10 @@ The TUI opens in full-screen mode with three areas:
 | `r` | Re-index the selected session's source (preview pane) |
 | `Ctrl+U` | Clear search input |
 | `Alt+Backspace` / `Alt+Delete` | Delete the previous / next word in search |
+| `Alt+Left` / `Alt+Right` | Move by one word in search |
+| `Alt+B` / `Alt+F` / `Alt+D` | Move backward / forward or delete the next word |
+| `Ctrl+A` / `Ctrl+E` | Move to the start / end of search |
+| `Ctrl+W` / `Ctrl+K` | Delete the previous word / rest of search |
 | `F1` | Show help popup |
 | `Esc` | Cancel a pending search, close help, or quit |
 
@@ -77,3 +81,7 @@ Full-text and fuzzy searches wait until input has been unchanged for one second,
 so typing, cursor movement, and held Backspace remain responsive. Press `Enter`
 to run a pending search immediately. Semantic and LLM searches remain
 Enter-triggered.
+
+On macOS, `Cmd+V` uses the terminal's normal bracketed-paste handling. Command
+editing keys are terminal-dependent, so the TUI provides Ctrl and Alt bindings
+that work consistently in terminal applications.

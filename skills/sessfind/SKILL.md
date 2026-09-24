@@ -47,6 +47,9 @@ sessfind search "<query>"
 ```
 
 The search uses BM25 ranking (like a search engine) to find the most relevant sessions.
+Plain multiword queries require every word in any order. Use uppercase `OR`
+for broad matching. To pass an adjacent phrase from a shell, preserve the quote
+characters, for example `sessfind search '"pull request"'`.
 
 **Available filters** — combine as needed:
 

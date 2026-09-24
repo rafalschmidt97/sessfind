@@ -10,8 +10,9 @@ The default mode. Powered by [tantivy](https://github.com/quickwit-oss/tantivy) 
 
 ```
 shopping                single keyword
-shopping assistant      any of these words (OR)
-+shopping +assistant    all words required (AND)
+shopping assistant      all words required (AND), any order
+shopping OR assistant   any word may match
++shopping +assistant    explicit all-words form
 "shopping assistant"    exact phrase
 shopp*                  prefix wildcard
 ```

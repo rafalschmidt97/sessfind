@@ -122,7 +122,8 @@ pub fn build_query_gen_prompt(user_query: &str) -> String {
 The engine uses full-text search (tantivy/BM25) on conversation logs between users and AI assistants.
 
 Query syntax supported:
-- word1 word2 = OR (any word matches)
+- word1 word2 = AND (all words required, any order)
+- word1 OR word2 = OR (any word matches)
 - +word1 +word2 = AND (all words required)
 - "exact phrase" = phrase match
 - -word = exclude word
