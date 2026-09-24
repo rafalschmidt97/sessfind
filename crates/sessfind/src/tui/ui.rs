@@ -798,6 +798,10 @@ fn draw_help_popup(f: &mut Frame, area: Rect, scroll: usize) {
             Style::default().fg(Color::Reset),
         )),
         Line::from(Span::styled(
+            "   Alt+Bksp/Del  delete previous/next word in search",
+            Style::default().fg(Color::Reset),
+        )),
+        Line::from(Span::styled(
             "   Ctrl+S        toggle sort order (newest first / best match)",
             Style::default().fg(Color::Reset),
         )),

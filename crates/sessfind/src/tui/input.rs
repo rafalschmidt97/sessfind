@@ -83,6 +83,25 @@ pub fn handle_paste(app: &mut App, text: &str) {
     app.on_input_changed();
 }
 
+fn previous_word_boundary(input: &str, cursor: usize) -> usize {
+    let before = &input[..cursor];
+    let without_space = before.trim_end_matches(char::is_whitespace);
+    without_space
+        .rfind(char::is_whitespace)
+        .map(|index| index + input[index..].chars().next().unwrap().len_utf8())
+        .unwrap_or(0)
+}
+
+fn next_word_boundary(input: &str, cursor: usize) -> usize {
+    let after = &input[cursor..];
+    let without_space = after.trim_start_matches(char::is_whitespace);
+    let word_start = input.len() - without_space.len();
+    without_space
+        .find(char::is_whitespace)
+        .map(|index| word_start + index)
+        .unwrap_or(input.len())
+}
+
 fn handle_search_key(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -93,6 +112,19 @@ fn handle_search_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char(c) => {
             app.input.insert(app.cursor_pos, c);
             app.cursor_pos += c.len_utf8();
+            app.on_input_changed();
+        }
+        KeyCode::Backspace if key.modifiers.contains(KeyModifiers::ALT) && app.cursor_pos > 0 => {
+            let start = previous_word_boundary(&app.input, app.cursor_pos);
+            app.input.drain(start..app.cursor_pos);
+            app.cursor_pos = start;
+            app.on_input_changed();
+        }
+        KeyCode::Delete
+            if key.modifiers.contains(KeyModifiers::ALT) && app.cursor_pos < app.input.len() =>
+        {
+            let end = next_word_boundary(&app.input, app.cursor_pos);
+            app.input.drain(app.cursor_pos..end);
             app.on_input_changed();
         }
         KeyCode::Backspace if app.cursor_pos > 0 => {
@@ -143,6 +175,27 @@ fn handle_search_key(app: &mut App, key: KeyEvent) {
             }
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn previous_word_boundary_includes_preceding_whitespace() {
+        let input = "find old query";
+
+        assert_eq!(previous_word_boundary(input, input.len()), 9);
+        assert_eq!(previous_word_boundary("find old   ", 11), 5);
+        assert_eq!(previous_word_boundary("żółw test", "żółw".len()), 0);
+    }
+
+    #[test]
+    fn next_word_boundary_includes_following_whitespace() {
+        assert_eq!(next_word_boundary("find old query", 5), 8);
+        assert_eq!(next_word_boundary("find   old", 4), 10);
+        assert_eq!(next_word_boundary("żółw test", 0), "żółw".len());
     }
 }
 

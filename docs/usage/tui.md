@@ -35,6 +35,7 @@ The TUI opens in full-screen mode with three areas:
 | `PgUp/PgDn` | Scroll session preview by one page |
 | `r` | Re-index the selected session's source (preview pane) |
 | `Ctrl+U` | Clear search input |
+| `Alt+Backspace` / `Alt+Delete` | Delete the previous / next word in search |
 | `F1` | Show help popup |
 | `Esc` | Cancel a pending search, close help, or quit |
 
