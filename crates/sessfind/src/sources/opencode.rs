@@ -92,78 +92,103 @@ impl SessionSource for OpenCodeSource {
     }
 
     fn load_messages(&self, session: &Session) -> Result<Vec<Message>> {
-        let db_path = config::opencode_db_path();
+        let db_path = &session.file_path;
         let conn =
-            Connection::open_with_flags(&db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+            Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        load_messages_from_connection(&conn, &session.session_id)
+    }
+}
 
-        // Get messages with their text parts
-        let mut stmt = conn.prepare(
-            "SELECT m.data, p.data as part_data, p.time_created
+fn load_messages_from_connection(conn: &Connection, session_id: &str) -> Result<Vec<Message>> {
+    // Get messages with their text parts
+    let mut stmt = conn.prepare(
+        "SELECT m.data, p.data as part_data, p.time_created
              FROM message m
              JOIN part p ON p.message_id = m.id
              WHERE m.session_id = ?1
-             ORDER BY p.time_created ASC",
-        )?;
+             ORDER BY m.time_created ASC, m.id ASC, p.time_created ASC, p.id ASC",
+    )?;
 
-        let mut messages = Vec::new();
+    let mut messages = Vec::new();
 
-        let rows = stmt.query_map([&session.session_id], |row| {
-            let msg_data: String = row.get(0)?;
-            let part_data: String = row.get(1)?;
-            let part_time: i64 = row.get(2)?;
-            Ok((msg_data, part_data, part_time))
-        })?;
+    let rows = stmt.query_map([session_id], |row| {
+        let msg_data: String = row.get(0)?;
+        let part_data: String = row.get(1)?;
+        let part_time: i64 = row.get(2)?;
+        Ok((msg_data, part_data, part_time))
+    })?;
 
-        for row in rows {
-            let (msg_data_str, part_data_str, part_time) = row?;
+    for row in rows {
+        let (msg_data_str, part_data_str, part_time) = row?;
 
-            let msg_data: serde_json::Value = match serde_json::from_str(&msg_data_str) {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-            let part_data: serde_json::Value = match serde_json::from_str(&part_data_str) {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
+        let msg_data: serde_json::Value =
+            serde_json::from_str(&msg_data_str).context("Malformed OpenCode message data")?;
+        let part_data: serde_json::Value =
+            serde_json::from_str(&part_data_str).context("Malformed OpenCode part data")?;
 
-            // Only index text parts
-            let part_type = part_data.get("type").and_then(|t| t.as_str()).unwrap_or("");
-            if part_type != "text" {
-                continue;
-            }
+        // Only index text parts
+        let part_type = part_data.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        if part_type != "text" && part_type != "file" {
+            continue;
+        }
 
-            let text = part_data
+        let mut text = if part_type == "file" {
+            "[File attachment: contents not inspected]".to_string()
+        } else {
+            part_data
                 .get("text")
                 .and_then(|t| t.as_str())
                 .unwrap_or("")
-                .to_string();
-            if text.trim().is_empty() {
-                continue;
-            }
-
-            let role = match msg_data.get("role").and_then(|r| r.as_str()) {
-                Some("user") => Role::User,
-                Some("assistant") => Role::Assistant,
-                _ => continue,
-            };
-
-            let timestamp = Utc.timestamp_millis_opt(part_time).single();
-
-            messages.push(Message {
-                role,
-                text,
-                timestamp,
-                tool_names: vec![],
-            });
+                .to_string()
+        };
+        if text.trim().is_empty() {
+            continue;
         }
 
-        Ok(messages)
+        let role = match msg_data.get("role").and_then(|r| r.as_str()) {
+            Some("user") => Role::User,
+            Some("assistant") => Role::Assistant,
+            _ => continue,
+        };
+        if msg_data.get("summary").and_then(|v| v.as_bool()) == Some(true) {
+            text = format!("[Compaction summary]\n{text}");
+        }
+
+        let timestamp = Utc.timestamp_millis_opt(part_time).single();
+
+        messages.push(Message {
+            role,
+            text,
+            timestamp,
+            tool_names: vec![],
+        });
     }
+
+    Ok(messages)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_parts_follow_message_order_with_stable_ties_and_no_reasoning() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT);
+            CREATE TABLE part (id TEXT, message_id TEXT, time_created INTEGER, data TEXT);
+            INSERT INTO message VALUES ('m1', 's', 1, '{\"role\":\"user\"}'), ('m2', 's', 2, '{\"role\":\"assistant\"}');
+            INSERT INTO part VALUES
+            ('p2', 'm2', 2, '{\"type\":\"text\",\"text\":\"answer\"}'),
+            ('p1b', 'm1', 3, '{\"type\":\"text\",\"text\":\"second part\"}'),
+            ('p1a', 'm1', 3, '{\"type\":\"text\",\"text\":\"first part\"}'),
+            ('p3', 'm2', 4, '{\"type\":\"reasoning\",\"text\":\"private\"}'),
+            ('p4', 'm2', 5, '{\"type\":\"tool\",\"state\":{\"output\":\"not conversation\"}}');").unwrap();
+        let messages = load_messages_from_connection(&conn, "s").unwrap();
+        assert_eq!(
+            messages.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(),
+            ["first part", "second part", "answer"]
+        );
+    }
 
     #[test]
     fn list_sessions_excludes_child_sessions_by_parent_id() {

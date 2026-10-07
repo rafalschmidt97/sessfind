@@ -11,6 +11,9 @@ pub trait SessionSource {
     fn name(&self) -> &'static str;
     fn list_sessions(&self) -> Result<Vec<Session>>;
     fn load_messages(&self, session: &Session) -> Result<Vec<Message>>;
+    fn load_conversation(&self, session: &Session) -> Result<Vec<Message>> {
+        self.load_messages(session)
+    }
 }
 
 pub fn source_for(source: Source) -> Box<dyn SessionSource> {

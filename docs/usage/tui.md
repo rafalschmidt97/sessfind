@@ -73,6 +73,22 @@ Use `↑/↓` to select an option and `Enter` to confirm, or `Esc` to cancel.
 
 All dates in the TUI are displayed in your computer's local timezone.
 
+## Conversation preview
+
+For Claude and OpenCode, the preview reads conversation text from the native
+JSONL file or SQLite database when a session is selected. It does not reconstruct
+the conversation from overlapping search chunks. Claude queued user prompts are
+included and deduplicated by message identity; sidechain records are marked.
+OpenCode text parts use message order with stable part ordering.
+
+The coverage line identifies native text or an indexed fallback. Missing or
+malformed native sources fall back to the index with a warning, so that content
+may be incomplete or stale. Other sources continue to use indexed previews.
+Tool output and reasoning are excluded; attachments appear as markers without
+embedding image data. A native preview is a read at selection time, not a live
+tail or a snapshot-checked transcript export. Selecting another session and
+returning reloads it; background-index completion also refreshes the preview.
+
 Search failures are shown separately from an empty result set and keep the
 previous successful results visible. The status bar and preview also warn when
 a source is stale or failed; press `r` in the preview pane to retry that source.

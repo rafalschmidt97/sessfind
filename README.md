@@ -26,6 +26,7 @@
 - Top-level sessions only — internal subagent calls are excluded
 - Interactive TUI with split-pane layout, real-time filtering, and session preview
 - Debounced interactive filtering keeps typing and held-key editing responsive
+- Claude/OpenCode previews read native conversation text, including queued Claude prompts; unavailable sources show an explicitly labelled indexed fallback
 - **VS Code extension** — browse, search, tag and resume sessions from a sidebar hub ([details](docs/usage/vscode.md))
 - Fuzzy substring matching as alternative search mode
 - **Semantic search** — find conceptually similar sessions using ML embeddings (optional plugin)

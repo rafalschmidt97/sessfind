@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::collections::HashSet;
 use std::path::Path;
-use tantivy::collector::{Count, TopDocs};
+use tantivy::collector::{Count, DocSetCollector, TopDocs};
 use tantivy::query::{
     AllQuery, BooleanQuery, EmptyQuery, FuzzyTermQuery, Occur, PhrasePrefixQuery, Query,
     QueryParser,
@@ -17,6 +17,13 @@ use crate::sources::SessionSource;
 
 /// Custom tokenizer name used for the `text` field (simple + lowercase + stemmer).
 const TOKENIZER_NAME: &str = "en_stem";
+
+fn chunk_sequence(id: &str) -> usize {
+    id.rsplit(':')
+        .next()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
+}
 
 pub struct IndexEngine {
     index: Index,
@@ -472,7 +479,7 @@ impl IndexEngine {
             tantivy::schema::IndexRecordOption::Basic,
         );
 
-        let top_docs = searcher.search(&query, &TopDocs::with_limit(1000))?;
+        let top_docs = searcher.search(&query, &DocSetCollector)?;
 
         let chunk_id_f = self.schema.get_field("chunk_id").unwrap();
         let session_id_f = self.schema.get_field("session_id").unwrap();
@@ -484,7 +491,7 @@ impl IndexEngine {
 
         let mut results: Vec<SearchResult> = top_docs
             .into_iter()
-            .filter_map(|(score, addr)| {
+            .filter_map(|addr| {
                 let doc: tantivy::TantivyDocument = searcher.doc(addr).ok()?;
                 let ts_val = doc
                     .get_first(timestamp_f)
@@ -533,13 +540,13 @@ impl IndexEngine {
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string(),
-                    score,
+                    score: 0.0,
                 })
             })
             .collect();
 
-        // Sort by chunk_id to maintain order
-        results.sort_by(|a, b| a.chunk_id.cmp(&b.chunk_id));
+        // The suffix is a numeric sequence, not a lexicographic identifier.
+        results.sort_by_key(|result| (result.source.as_str(), chunk_sequence(&result.chunk_id)));
         Ok(results)
     }
 
@@ -551,6 +558,72 @@ impl IndexEngine {
         let mut chunks = self.get_session_chunks(session_id)?;
         chunks.retain(|chunk| chunk.source == source);
         Ok(chunks)
+    }
+
+    /// Read source conversation text independently of lossy, overlapping search windows.
+    pub fn conversation_preview(&self, selected: &SearchResult) -> (Vec<SearchResult>, String) {
+        if matches!(selected.source, Source::ClaudeCode | Source::OpenCode) {
+            match self.native_conversation(selected) {
+                Ok(chunks) => return (chunks, "Native conversation text; tool output/reasoning excluded, attachments shown as markers".into()),
+                Err(error) => {
+                    let chunks = self.get_session_chunks_for_source(&selected.session_id, selected.source);
+                    return match chunks {
+                        Ok(chunks) => (chunks, format!("Indexed fallback (partial, possibly stale): {error}")),
+                        Err(index_error) => (vec![], format!("Preview unavailable: {error}; index: {index_error}")),
+                    };
+                }
+            }
+        }
+        match self.get_session_chunks_for_source(&selected.session_id, selected.source) {
+            Ok(chunks) => (
+                chunks,
+                "Indexed preview; not a complete native transcript".into(),
+            ),
+            Err(error) => (vec![], format!("Indexed preview unavailable: {error}")),
+        }
+    }
+
+    fn native_conversation(&self, selected: &SearchResult) -> Result<Vec<SearchResult>> {
+        let path = self
+            .state
+            .source_path(selected.source.as_str(), &selected.session_id)?
+            .ok_or_else(|| anyhow::anyhow!("Native source path is unavailable"))?;
+        let session = Session {
+            source: selected.source,
+            session_id: selected.session_id.clone(),
+            project: selected.project.clone(),
+            directory: selected.project.clone(),
+            title: selected.title.clone(),
+            started_at: selected.timestamp,
+            model: None,
+            file_path: path,
+            file_mtime: 0,
+            file_size: 0,
+        };
+        let messages = crate::sources::source_for(selected.source).load_conversation(&session)?;
+        if messages.is_empty() {
+            anyhow::bail!("Native source has no conversation text");
+        }
+        Ok(messages
+            .into_iter()
+            .enumerate()
+            .map(|(index, message)| {
+                let role = match message.role {
+                    crate::models::Role::User => "USER",
+                    crate::models::Role::Assistant => "ASSISTANT",
+                };
+                SearchResult {
+                    chunk_id: format!(
+                        "{}:{}:message:{index}",
+                        selected.source.as_str(),
+                        selected.session_id
+                    ),
+                    snippet: format!("{role}: {}", message.text),
+                    timestamp: message.timestamp.unwrap_or(selected.timestamp),
+                    ..selected.clone()
+                }
+            })
+            .collect())
     }
 
     pub fn list_all_chunks(&self) -> Result<Vec<SearchResult>> {
@@ -993,6 +1066,63 @@ mod tests {
 
         let query = parse_fts_user_query(&index, text_field, "missing OR hel*").unwrap();
         assert_eq!(searcher.search(&query, &Count).unwrap(), 1);
+    }
+
+    #[test]
+    fn session_reads_include_every_chunk_in_numeric_order() {
+        let temp = TempDir::new().unwrap();
+        let engine = IndexEngine::open(temp.path()).unwrap();
+        let mut writer = engine.index.writer(15_000_000).unwrap();
+        for index in 0..1005 {
+            let mut doc = tantivy::TantivyDocument::new();
+            doc.add_text(
+                engine.schema.get_field("chunk_id").unwrap(),
+                format!("claude:long:{index}"),
+            );
+            doc.add_text(engine.schema.get_field("session_id").unwrap(), "long");
+            doc.add_text(engine.schema.get_field("source").unwrap(), "claude");
+            doc.add_text(
+                engine.schema.get_field("text").unwrap(),
+                format!("message {index}"),
+            );
+            writer.add_document(doc).unwrap();
+        }
+        writer.commit().unwrap();
+        let chunks = engine
+            .get_session_chunks_for_source("long", Source::ClaudeCode)
+            .unwrap();
+        assert_eq!(chunks.len(), 1005);
+        for (index, chunk) in chunks.iter().enumerate() {
+            assert_eq!(chunk.snippet, format!("message {index}"));
+        }
+    }
+
+    #[test]
+    fn native_preview_reads_new_text_without_reindex_and_labels_fallback() {
+        let temp = TempDir::new().unwrap();
+        let engine = IndexEngine::open(&temp.path().join("index")).unwrap();
+        let path = temp.path().join("session.jsonl");
+        std::fs::write(
+            &path,
+            "{\"type\":\"user\",\"message\":{\"content\":\"newest unindexed text\"}}\n",
+        )
+        .unwrap();
+        let mut session = test_session(Source::ClaudeCode, "native", 1);
+        session.file_path = path.to_string_lossy().into();
+        let source = TestSource {
+            name: "claude",
+            sessions: vec![session],
+            text: "old indexed text",
+        };
+        engine.index_source(&source, false).unwrap();
+        let selected = engine.get_session_chunks("native").unwrap().remove(0);
+        let (chunks, coverage) = engine.conversation_preview(&selected);
+        assert!(coverage.starts_with("Native"));
+        assert_eq!(chunks[0].snippet, "USER: newest unindexed text");
+        std::fs::write(&path, "malformed").unwrap();
+        let (chunks, coverage) = engine.conversation_preview(&selected);
+        assert!(coverage.starts_with("Indexed fallback"));
+        assert!(chunks[0].snippet.contains("old indexed text"));
     }
 
     #[test]

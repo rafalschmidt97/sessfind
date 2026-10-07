@@ -422,7 +422,12 @@ fn draw_detail_pane(f: &mut Frame, app: &mut App, area: Rect) {
     )));
     lines.push(Line::from(""));
 
-    // Content from detail_chunks
+    lines.push(Line::from(Span::styled(
+        format!(" {}", app.detail_coverage),
+        Style::default().fg(Color::Yellow),
+    )));
+    lines.push(Line::from(""));
+    // Native conversation messages, or explicitly labelled indexed fallback.
     for chunk in &app.detail_chunks {
         for text_line in chunk.snippet.lines() {
             let line = if text_line.starts_with("USER:") {

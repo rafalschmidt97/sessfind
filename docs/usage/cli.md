@@ -57,6 +57,22 @@ sessfind show SESSION_ID
 sessfind show SESSION_ID --source claude
 ```
 
+For Claude and OpenCode, text output reads the native conversation, including
+queued Claude user prompts. It preserves message order and long text without
+search-window overlap. Tool output and reasoning are excluded; image/file
+attachments are markers. Unavailable or malformed sources produce an explicitly
+labelled indexed fallback.
+
+`show --json` retains the existing `session` and `chunks` fields for compatibility
+and adds `conversation` (native message records when available) and `coverage`
+(the source/limitations of that view). `chunks` is still search-index content,
+now retrieved without the old 1,000-chunk cap and ordered by numeric sequence.
+This is not a paginated, snapshot-checked export and does not prove tool execution.
+
+After upgrading the parsers, use `sessfind index --source claude --force` and
+`sessfind index --source opencode --force` to rebuild unchanged historical
+sessions for search. Native previews do not require this re-index.
+
 ## Index statistics
 
 ```bash

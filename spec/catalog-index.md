@@ -15,6 +15,18 @@ SQLite bookkeeping are identical. A mismatch clears the SQLite bookkeeping and t
 catalog pass reconciles stale documents and rebuilds from the source logs,
 rather than treating missing documents as unchanged sessions.
 
+## Conversation reads
+
+Search windows are not transcripts. Claude/OpenCode previews and human `show`
+read conversation messages using the source path retained in SQLite bookkeeping.
+The conversation adapter preserves native text; index extraction may clean
+internal wrappers. Both Claude paths include queued prompts and deduplicate
+message identities. Native parse errors trigger labelled indexed fallback.
+Tool output/reasoning are outside this view, attachments are markers, and reads
+are not snapshot-checked pagination. JSON `show` keeps indexed `chunks` and adds
+`conversation` and `coverage`. Indexed session retrieval collects all matching
+documents and sorts numeric chunk suffixes, including beyond 1,000 chunks.
+
 ## Reconciliation
 
 An index pass first discovers a complete source snapshot. It compares the

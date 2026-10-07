@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
+use std::collections::HashSet;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -36,6 +37,10 @@ struct RawEntry {
     git_branch: Option<String>,
     timestamp: Option<String>,
     message: Option<RawMessage>,
+    uuid: Option<String>,
+    attachment: Option<serde_json::Value>,
+    #[serde(rename = "isSidechain", default)]
+    sidechain: bool,
 }
 
 #[derive(Deserialize)]
@@ -114,6 +119,9 @@ fn extract_text_from_content(content: &serde_json::Value) -> (String, Vec<String
                                 tool_names.push(name.to_string());
                             }
                         }
+                        Some("image") => {
+                            texts.push("[Image attachment: contents not inspected]".into())
+                        }
                         // Skip thinking, tool_result, etc.
                         _ => {}
                     }
@@ -123,8 +131,7 @@ fn extract_text_from_content(content: &serde_json::Value) -> (String, Vec<String
         _ => {}
     }
 
-    let raw = texts.join("\n");
-    (clean_message_text(&raw), tool_names)
+    (texts.join("\n"), tool_names)
 }
 
 /// Strip internal XML tags and meta content from Claude Code messages.
@@ -307,56 +314,147 @@ impl SessionSource for ClaudeCodeSource {
     fn load_messages(&self, session: &Session) -> Result<Vec<Message>> {
         let file = fs::File::open(&session.file_path)
             .with_context(|| format!("Failed to open {}", session.file_path))?;
-        let reader = BufReader::new(file);
-        let mut messages = Vec::new();
+        read_messages(BufReader::new(file), true)
+    }
 
-        for line in reader.lines() {
-            let line = line?;
-            if line.is_empty() {
-                continue;
-            }
+    fn load_conversation(&self, session: &Session) -> Result<Vec<Message>> {
+        let file = fs::File::open(&session.file_path)
+            .with_context(|| format!("Failed to open {}", session.file_path))?;
+        read_messages(BufReader::new(file), false)
+    }
+}
 
-            let entry: RawEntry = match serde_json::from_str(&line) {
-                Ok(e) => e,
-                Err(_) => continue,
-            };
-
-            let role = match entry.entry_type.as_deref() {
-                Some("user") => Role::User,
-                Some("assistant") => Role::Assistant,
-                _ => continue,
-            };
-
-            let msg = match &entry.message {
-                Some(m) => m,
-                None => continue,
-            };
-
-            let content = match &msg.content {
-                Some(c) => c,
-                None => continue,
-            };
-
-            let (text, tool_names) = extract_text_from_content(content);
-
-            // Skip empty or system-only messages
-            if text.trim().is_empty() {
-                continue;
-            }
-
-            let timestamp = entry
-                .timestamp
-                .as_deref()
-                .and_then(|ts| ts.parse::<DateTime<Utc>>().ok());
-
-            messages.push(Message {
-                role,
-                text,
-                timestamp,
-                tool_names,
-            });
+fn read_messages(reader: impl BufRead, for_index: bool) -> Result<Vec<Message>> {
+    let mut messages = Vec::new();
+    let mut seen = HashSet::new();
+    for (line_number, line) in reader.lines().enumerate() {
+        let line = line?;
+        if line.trim().is_empty() {
+            continue;
         }
 
-        Ok(messages)
+        let entry: RawEntry = serde_json::from_str(&line)
+            .with_context(|| format!("Malformed Claude transcript at line {}", line_number + 1))?;
+
+        let (role, content, identity) = match entry.entry_type.as_deref() {
+            Some("attachment") => {
+                let Some(attachment) = &entry.attachment else {
+                    continue;
+                };
+                if attachment.get("type").and_then(|v| v.as_str()) != Some("queued_command") {
+                    continue;
+                }
+                (
+                    Role::User,
+                    attachment.get("prompt"),
+                    attachment
+                        .get("source_uuid")
+                        .or_else(|| attachment.get("delivery_id"))
+                        .and_then(|v| v.as_str())
+                        .or(entry.uuid.as_deref()),
+                )
+            }
+            Some("user") => (
+                Role::User,
+                entry.message.as_ref().and_then(|m| m.content.as_ref()),
+                entry.uuid.as_deref(),
+            ),
+            Some("assistant") => (
+                Role::Assistant,
+                entry.message.as_ref().and_then(|m| m.content.as_ref()),
+                entry.uuid.as_deref(),
+            ),
+            _ => continue,
+        };
+        let content = match content {
+            Some(c) => c,
+            None => continue,
+        };
+
+        let (mut text, tool_names) = extract_text_from_content(content);
+        if for_index {
+            text = clean_message_text(&text);
+        }
+
+        // Skip empty or system-only messages
+        if text.trim().is_empty() {
+            continue;
+        }
+        if let Some(identity) = identity
+            && !seen.insert(identity.to_string())
+        {
+            continue;
+        }
+        if entry.sidechain {
+            text = format!("[Sidechain record]\n{text}");
+        }
+
+        let timestamp = entry
+            .timestamp
+            .as_deref()
+            .or_else(|| {
+                entry
+                    .attachment
+                    .as_ref()
+                    .and_then(|a| a.get("timestamp"))
+                    .and_then(|t| t.as_str())
+            })
+            .and_then(|ts| ts.parse::<DateTime<Utc>>().ok());
+
+        messages.push(Message {
+            role,
+            text,
+            timestamp,
+            tool_names,
+        });
+    }
+
+    Ok(messages)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn queued_user_messages_are_ordered_deduplicated_and_searchable() {
+        let raw = concat!(
+            "{\"type\":\"user\",\"uuid\":\"first\",\"message\":{\"content\":\"start\"}}\n",
+            "{\"type\":\"attachment\",\"attachment\":{\"type\":\"queued_command\",\"source_uuid\":\"queued\",\"prompt\":\"correction\"}}\n",
+            "{\"type\":\"user\",\"uuid\":\"queued\",\"message\":{\"content\":\"correction\"}}\n",
+            "{\"type\":\"assistant\",\"message\":{\"content\":\"latest endpoint\"}}\n"
+        );
+        for for_index in [true, false] {
+            let messages = read_messages(raw.as_bytes(), for_index).unwrap();
+            assert_eq!(
+                messages.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(),
+                ["start", "correction", "latest endpoint"]
+            );
+        }
+    }
+
+    #[test]
+    fn conversation_preserves_text_and_marks_attachments_and_sidechains() {
+        let text = format!(
+            "<system-reminder>retain in native view</system-reminder>\n{}",
+            "żółć\n".repeat(3000)
+        );
+        let raw = serde_json::json!({"type":"assistant", "isSidechain":true,
+            "message":{"content":[{"type":"text","text":text},
+              {"type":"image","source":{"data":"not-for-display"}},
+              {"type":"thinking","thinking":"not-for-display"},
+              {"type":"tool_result","content":"not-for-display"}]}})
+        .to_string();
+        let messages = read_messages(raw.as_bytes(), false).unwrap();
+        assert!(messages[0].text.contains(&text));
+        assert!(messages[0].text.contains("[Sidechain record]"));
+        assert!(messages[0].text.contains("Image attachment"));
+        assert!(!messages[0].text.contains("not-for-display"));
+        assert!(
+            read_messages(b"{}\n{bad".as_slice(), false)
+                .unwrap_err()
+                .to_string()
+                .contains("line 2")
+        );
     }
 }

@@ -521,6 +521,7 @@ pub fn show(
         );
     }
     let key = session_key(chunks[0].source, session_id);
+    let (conversation, coverage) = engine.conversation_preview(&chunks[0]);
 
     if json {
         let mut summary = session_summary(&chunks[0]);
@@ -546,6 +547,8 @@ pub fn show(
         let output = serde_json::json!({
             "session": summary,
             "chunks": chunks,
+            "conversation": conversation,
+            "coverage": coverage,
         });
         println!("{output}");
         return Ok(());
@@ -568,7 +571,8 @@ pub fn show(
     println!("{}", "-".repeat(80));
     println!();
 
-    for chunk in &chunks {
+    println!("{coverage}\n");
+    for chunk in &conversation {
         for line in chunk.snippet.lines() {
             if line.starts_with("USER:") {
                 println!("\x1b[32m{}\x1b[0m", line);

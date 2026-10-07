@@ -124,6 +124,7 @@ pub struct App<'a> {
     pub results: Vec<SearchResult>,
     pub selected: usize,
     pub detail_chunks: Vec<SearchResult>,
+    pub detail_coverage: String,
     pub detail_scroll: usize,
     pub available_modes: Vec<SearchMode>,
     pub mode_index: usize,
@@ -203,6 +204,7 @@ impl<'a> App<'a> {
             results,
             selected: 0,
             detail_chunks: Vec::new(),
+            detail_coverage: String::new(),
             detail_scroll: 0,
             available_modes,
             mode_index,
@@ -530,6 +532,7 @@ impl<'a> App<'a> {
     pub fn load_detail(&mut self) {
         if self.results.is_empty() {
             self.detail_chunks.clear();
+            self.detail_coverage.clear();
             self.cached_session_key = None;
             return;
         }
@@ -543,20 +546,11 @@ impl<'a> App<'a> {
             return;
         }
 
-        match self
-            .engine
-            .get_session_chunks_for_source(session_id, source)
-        {
-            Ok(chunks) => {
-                self.detail_chunks = chunks;
-                self.detail_scroll = 0;
-                self.cached_session_key = Some((source, session_id.clone()));
-            }
-            Err(_) => {
-                self.detail_chunks.clear();
-                self.cached_session_key = None;
-            }
-        }
+        let (chunks, coverage) = self.engine.conversation_preview(selected);
+        self.detail_chunks = chunks;
+        self.detail_coverage = coverage;
+        self.detail_scroll = 0;
+        self.cached_session_key = Some((source, session_id.clone()));
     }
 
     pub fn select_next(&mut self) {

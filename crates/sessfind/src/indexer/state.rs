@@ -1,6 +1,6 @@
 use anyhow::Result;
 use chrono::{DateTime, NaiveDateTime, Utc};
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -19,6 +19,16 @@ pub struct SourceSyncState {
 }
 
 impl IndexState {
+    pub fn source_path(&self, source: &str, session_id: &str) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT file_path FROM indexed_sessions WHERE source = ?1 AND session_id = ?2",
+                (source, session_id),
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
     pub fn open(db_path: &Path) -> Result<Self> {
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent)?;
