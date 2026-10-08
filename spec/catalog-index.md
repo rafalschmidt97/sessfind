@@ -29,6 +29,12 @@ documents and sorts numeric chunk suffixes, including beyond 1,000 chunks.
 
 ## Reconciliation
 
+Claude project grouping uses explicit native `cwd`, not its lossy encoded JSONL
+parent folder. Missing cwd is displayed as unknown. TUI resume resolves the
+native session directory again even when the index is stale, requires an existing
+absolute directory, and launches directly. Neither resume nor its executor
+creates folders or falls back to the current directory.
+
 An index pass first discovers a complete source snapshot. It compares the
 snapshot with SQLite bookkeeping, writes new and changed sessions, deletes
 source-qualified sessions absent from the snapshot, and commits Tantivy before

@@ -560,6 +560,28 @@ impl IndexEngine {
         Ok(chunks)
     }
 
+    /// Resolve the native session cwd rather than treating a display label as a path.
+    pub fn resume_directory(&self, selected: &SearchResult) -> Result<String> {
+        let directory = if selected.source == Source::ClaudeCode {
+            let path = self
+                .state
+                .source_path("claude", &selected.session_id)?
+                .ok_or_else(|| {
+                    anyhow::anyhow!("No native transcript path for this Claude session")
+                })?;
+            crate::sources::claude_code::recorded_directory(Path::new(&path))?
+        } else {
+            crate::sources::source_for(selected.source)
+                .list_sessions()?
+                .into_iter()
+                .find(|s| s.session_id == selected.session_id)
+                .ok_or_else(|| anyhow::anyhow!("Session no longer exists in its native source"))?
+                .directory
+        };
+        crate::sources::validate_resume_directory(&directory)?;
+        Ok(directory)
+    }
+
     /// Read source conversation text independently of lossy, overlapping search windows.
     pub fn conversation_preview(&self, selected: &SearchResult) -> (Vec<SearchResult>, String) {
         if matches!(selected.source, Source::ClaudeCode | Source::OpenCode) {
@@ -1123,6 +1145,42 @@ mod tests {
         let (chunks, coverage) = engine.conversation_preview(&selected);
         assert!(coverage.starts_with("Indexed fallback"));
         assert!(chunks[0].snippet.contains("old indexed text"));
+    }
+
+    #[test]
+    fn resume_ignores_stale_index_project_and_uses_native_cwd() {
+        let temp = TempDir::new().unwrap();
+        let engine = IndexEngine::open(&temp.path().join("index")).unwrap();
+        let cwd = temp.path().join("user.name");
+        std::fs::create_dir(&cwd).unwrap();
+        let transcript = temp.path().join("session.jsonl");
+        std::fs::write(
+            &transcript,
+            serde_json::json!({"type":"user", "cwd":cwd, "message":{"content":"hello"}})
+                .to_string(),
+        )
+        .unwrap();
+        let mut session = test_session(Source::ClaudeCode, "resume", 1);
+        session.file_path = transcript.to_string_lossy().into();
+        session.project = "/guessed-path-must-not-be-used".into();
+        engine
+            .index_source(
+                &TestSource {
+                    name: "claude",
+                    sessions: vec![session],
+                    text: "hello",
+                },
+                false,
+            )
+            .unwrap();
+        let selected = engine.get_session_chunks("resume").unwrap().remove(0);
+        assert_eq!(
+            engine.resume_directory(&selected).unwrap(),
+            cwd.to_str().unwrap()
+        );
+        std::fs::remove_dir(&cwd).unwrap();
+        assert!(engine.resume_directory(&selected).is_err());
+        assert!(!cwd.exists());
     }
 
     #[test]

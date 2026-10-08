@@ -31,7 +31,7 @@
 - Fuzzy substring matching as alternative search mode
 - **Semantic search** — find conceptually similar sessions using ML embeddings (optional plugin)
 - **LLM search** — agentic search using installed AI CLI tools (Claude Code, OpenCode, Copilot)
-- Resume any session directly from the search results with directory choice
+- Resume sessions directly in their recorded working directory, without creating folders or choosing another location
 - Reconciled incremental indexing — adds and updates sessions and removes entries deleted at the source
 - **Automatic indexing** — background watcher re-indexes on session changes ([details](docs/usage/automatic-indexing.md))
 - **Agent skill** — use sessfind directly from GitHub Copilot CLI, Claude Code, or OpenCode ([details](docs/usage/agent-skill.md))

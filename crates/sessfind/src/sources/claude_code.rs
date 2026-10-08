@@ -51,50 +51,26 @@ struct RawMessage {
     model: Option<String>,
 }
 
-fn decode_project_path(encoded: &str) -> String {
-    // "-Users-m-repos-foo-bar" -> "/Users/m/repos/foo-bar"
-    // The encoding replaces '/' with '-', so we need to find path separators
-    // Heuristic: known path prefixes help us decode correctly
-    if !encoded.starts_with('-') {
-        return encoded.to_string();
-    }
-
-    // Try to find the actual directory on disk by progressively resolving segments
-    let without_leading = &encoded[1..]; // strip leading '-'
-    let segments: Vec<&str> = without_leading.split('-').collect();
-
-    let mut path = String::from("/");
-    let mut i = 0;
-    while i < segments.len() {
-        // Try single segment first
-        let candidate = format!("{}{}", path, segments[i]);
-        if std::path::Path::new(&candidate).exists() {
-            path = format!("{}/", candidate);
-            i += 1;
-        } else {
-            // Try joining with next segments using '-' (for dirs like "session-seek")
-            let mut found = false;
-            for j in (i + 1..segments.len()).rev() {
-                let joined = segments[i..=j].join("-");
-                let candidate = format!("{}{}", path, joined);
-                if std::path::Path::new(&candidate).exists() {
-                    path = format!("{}/", candidate);
-                    i = j + 1;
-                    found = true;
-                    break;
-                }
-            }
-            if !found {
-                // Fallback: treat remaining as single joined segment
-                let remaining = segments[i..].join("-");
-                path = format!("{}{}", path, remaining);
-                break;
-            }
+/// Storage folder encoding is lossy (dots, slashes and hyphens can collide).
+/// Only explicit main-session cwd metadata is a usable resume directory.
+pub fn recorded_directory(path: &Path) -> Result<String> {
+    let reader = BufReader::new(fs::File::open(path)?);
+    let mut directory = None;
+    for line in reader.lines() {
+        let line = line?;
+        if let Ok(entry) = serde_json::from_str::<RawEntry>(&line)
+            && !entry.sidechain
+            && let Some(cwd) = entry.cwd.filter(|cwd| !cwd.trim().is_empty())
+        {
+            directory = Some(cwd);
         }
     }
-
-    // Remove trailing slash
-    path.trim_end_matches('/').to_string()
+    directory.ok_or_else(|| {
+        anyhow::anyhow!(
+            "No recorded working directory in Claude transcript {}",
+            path.display()
+        )
+    })
 }
 
 fn extract_text_from_content(content: &serde_json::Value) -> (String, Vec<String>) {
@@ -229,13 +205,12 @@ impl SessionSource for ClaudeCodeSource {
         let mut sessions = Vec::new();
 
         for file_path in find_session_files(&self.projects_dir) {
-            // Extract project name from parent dir
-            let project_dir = file_path
-                .parent()
-                .and_then(|p| p.file_name())
-                .and_then(|n| n.to_str())
-                .unwrap_or("unknown");
-            let project = decode_project_path(project_dir);
+            let directory = recorded_directory(&file_path).unwrap_or_default();
+            let project = if directory.is_empty() {
+                "Unknown directory".to_string()
+            } else {
+                directory.clone()
+            };
 
             // Session ID from filename
             let session_id = file_path
@@ -260,7 +235,6 @@ impl SessionSource for ClaudeCodeSource {
             let mut started_at = None;
             let mut model = None;
             let mut title = None;
-            let mut cwd = None;
 
             for line in reader.lines().take(10) {
                 let line = line?;
@@ -280,9 +254,6 @@ impl SessionSource for ClaudeCodeSource {
                     {
                         started_at = ts.parse::<DateTime<Utc>>().ok();
                     }
-                    if cwd.is_none() {
-                        cwd = entry.cwd.clone();
-                    }
                     if title.is_none() {
                         title = entry.slug.clone();
                     }
@@ -298,7 +269,7 @@ impl SessionSource for ClaudeCodeSource {
                 source: Source::ClaudeCode,
                 session_id,
                 project: project.clone(),
-                directory: cwd.unwrap_or(project),
+                directory,
                 title,
                 started_at: started_at.unwrap_or_else(Utc::now),
                 model,
@@ -415,6 +386,38 @@ fn read_messages(reader: impl BufRead, for_index: bool) -> Result<Vec<Message>> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn project_and_directory_use_recorded_cwd_not_lossy_folder_name() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let project = temp.path().join("-Users-rafal-schmidt-Developer-personal");
+        fs::create_dir(&project).unwrap();
+        let path = project.join("session.jsonl");
+        let mut content = "{\"type\":\"mode\"}\n".repeat(15);
+        content.push_str("{\"type\":\"user\",\"cwd\":\"/Users/rafal.schmidt/Developer/personal\",\"message\":{\"content\":\"hi\"}}\n");
+        content.push_str(
+            "{\"type\":\"assistant\",\"isSidechain\":true,\"cwd\":\"/wrong/sidechain\"}\n",
+        );
+        fs::write(&path, content).unwrap();
+        let source = ClaudeCodeSource {
+            projects_dir: temp.path().to_owned(),
+        };
+        let sessions = source.list_sessions().unwrap();
+        assert_eq!(
+            sessions[0].project,
+            "/Users/rafal.schmidt/Developer/personal"
+        );
+        assert_eq!(sessions[0].directory, sessions[0].project);
+        fs::write(
+            &path,
+            "{\"type\":\"user\",\"message\":{\"content\":\"no cwd\"}}\n",
+        )
+        .unwrap();
+        assert!(recorded_directory(&path).is_err());
+        let sessions = source.list_sessions().unwrap();
+        assert_eq!(sessions[0].project, "Unknown directory");
+        assert!(sessions[0].directory.is_empty());
+    }
 
     #[test]
     fn queued_user_messages_are_ordered_deduplicated_and_searchable() {

@@ -678,14 +678,7 @@ fn exec_resume(resume: &tui::ResumeCommand) -> Result<()> {
     // Claude Code requires being in the project directory to find the session
     if let Some(ref cwd) = resume.cwd {
         let path = std::path::Path::new(cwd);
-        if !path.exists() {
-            std::fs::create_dir_all(path).map_err(|error| {
-                anyhow::anyhow!("Cannot create resume directory {cwd}: {error}")
-            })?;
-        }
-        if !path.is_dir() {
-            anyhow::bail!("Resume working directory is not a directory: {cwd}");
-        }
+        sources::validate_resume_directory(cwd)?;
         command.current_dir(path);
     }
     // Replace current process with the resume command

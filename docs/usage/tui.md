@@ -31,7 +31,7 @@ The TUI opens in full-screen mode with three areas:
 | `Shift+Tab` | Toggle search mode (FTS / Fuzzy / LLM / Semantic*) |
 | `Ctrl+S` | Toggle sort order (Newest first / Best match) |
 | `Up/Down`, `j/k` | Navigate results |
-| `Enter` | Resume selected session (opens confirmation dialog) |
+| `Enter` | Resume selected session in its recorded working directory |
 | `PgUp/PgDn` | Scroll session preview by one page |
 | `r` | Re-index the selected session's source (preview pane) |
 | `Ctrl+U` | Clear search input |
@@ -57,19 +57,17 @@ Press `Ctrl+S` (while in search focus) to toggle the sort order of results:
 
 The current sort order is displayed at the bottom of the results list. The setting persists until the application is closed — switching between search and results does not reset it.
 
-## Resume Confirmation
+## Resume in place
 
-When you press `Enter` on a selected session, a confirmation dialog appears showing:
+Press `Enter` on a selected result to resume immediately in the native session's
+recorded working directory. There is no directory picker and sessfind never
+creates a directory for resume or substitutes the current directory.
 
-- **Session summary** — source, date (in local time), and title
-- **Directory choice** — where to resume the session:
-    - **Session directory** — the original project directory (if it no longer exists, it will be created)
-    - **Current directory** — your current working directory
-    - **Cancel** — go back to search
-
-Use `↑/↓` to select an option and `Enter` to confirm, or `Esc` to cancel.
-
-![sessfind resume confirmation dialog](../assets/tui-resume.webp)
+Claude's directory comes from the latest main-session `cwd` metadata, not the
+encoded storage-folder name. This handles punctuation such as dots in usernames
+without guessing paths. Other sources use their adapter's recorded directory.
+If the source or directory is unavailable, the TUI stays open and shows an error.
+Restore the original directory before retrying.
 
 All dates in the TUI are displayed in your computer's local timezone.
 
