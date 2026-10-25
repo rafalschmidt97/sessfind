@@ -41,6 +41,20 @@ struct RawEntry {
     attachment: Option<serde_json::Value>,
     #[serde(rename = "isSidechain", default)]
     sidechain: bool,
+    #[serde(rename = "agentSetting")]
+    agent_setting: Option<String>,
+}
+
+/// Herdr subagent children run as standalone sessions, so unlike native
+/// subagents they get their own top-level transcript. The launcher starts
+/// them with a plugin-scoped `--agent`, which Claude Code records near the
+/// top of the transcript.
+fn is_herdr_subagent(entry: &RawEntry) -> bool {
+    entry.entry_type.as_deref() == Some("agent-setting")
+        && entry
+            .agent_setting
+            .as_deref()
+            .is_some_and(|setting| setting.starts_with("herdr-subagents:"))
 }
 
 #[derive(Deserialize)]
@@ -235,6 +249,7 @@ impl SessionSource for ClaudeCodeSource {
             let mut started_at = None;
             let mut model = None;
             let mut title = None;
+            let mut herdr_child = false;
 
             for line in reader.lines().take(10) {
                 let line = line?;
@@ -245,6 +260,11 @@ impl SessionSource for ClaudeCodeSource {
                     Ok(e) => e,
                     Err(_) => continue,
                 };
+
+                if is_herdr_subagent(&entry) {
+                    herdr_child = true;
+                    break;
+                }
 
                 if entry.entry_type.as_deref() == Some("user")
                     || entry.entry_type.as_deref() == Some("assistant")
@@ -263,6 +283,10 @@ impl SessionSource for ClaudeCodeSource {
                         model = msg.model.clone();
                     }
                 }
+            }
+
+            if herdr_child {
+                continue;
             }
 
             sessions.push(Session {
@@ -417,6 +441,40 @@ mod tests {
         let sessions = source.list_sessions().unwrap();
         assert_eq!(sessions[0].project, "Unknown directory");
         assert!(sessions[0].directory.is_empty());
+    }
+
+    #[test]
+    fn list_sessions_excludes_herdr_subagent_children() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let project = temp.path().join("-repo");
+        fs::create_dir(&project).unwrap();
+        fs::write(
+            project.join("root.jsonl"),
+            concat!(
+                "{\"type\":\"agent-setting\",\"agentSetting\":\"reviewer\"}\n",
+                "{\"type\":\"user\",\"cwd\":\"/repo\",\"message\":{\"content\":\"hi\"}}\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            project.join("child.jsonl"),
+            concat!(
+                "{\"type\":\"custom-title\",\"customTitle\":\"trim-b\"}\n",
+                "{\"type\":\"agent-setting\",\"agentSetting\":\"herdr-subagents:scout\"}\n",
+                "{\"type\":\"user\",\"cwd\":\"/repo\",\"message\":{\"content\":\"Read the brief\"}}\n"
+            ),
+        )
+        .unwrap();
+        let source = ClaudeCodeSource {
+            projects_dir: temp.path().to_owned(),
+        };
+        let ids: Vec<_> = source
+            .list_sessions()
+            .unwrap()
+            .into_iter()
+            .map(|session| session.session_id)
+            .collect();
+        assert_eq!(ids, ["root"]);
     }
 
     #[test]
