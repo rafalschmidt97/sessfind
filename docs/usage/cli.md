@@ -102,6 +102,11 @@ sessfind sessions list --json --tag work --limit 20
 sessfind projects list --json         # auto-grouped by directory
 ```
 
+Each `search --json` hit carries `session_key` (`<source>:<session_id>`) and a
+`resume` command spec (`args` plus `cwd`), the same shape as in
+`sessions list --json`, so clients can resume a hit without a second lookup.
+Snippets, titles, and conversation text have credentials redacted.
+
 ## Tags
 
 Tags attach to individual sessions or to whole project directories — sessions

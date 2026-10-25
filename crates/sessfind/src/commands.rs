@@ -37,6 +37,7 @@ const FEATURES: &[&str] = &[
     "catalog-reconciliation",
     "session-grouped-search",
     "credential-redaction",
+    "search-resume-spec",
 ];
 
 pub fn session_summary(r: &SearchResult) -> SessionSummary {
@@ -250,10 +251,28 @@ pub fn projects_list(engine: &IndexEngine, store: &MetadataStore, json: bool) ->
     Ok(())
 }
 
+/// Search hits as JSON, each extended with `session_key` and `resume` so a
+/// client can open or resume a hit without a second lookup.
+fn search_results_json(results: &[SearchResult], limit: usize) -> Result<Vec<serde_json::Value>> {
+    results
+        .iter()
+        .take(limit)
+        .map(|r| {
+            let mut value = serde_json::to_value(r)?;
+            value["session_key"] = session_key(r.source, &r.session_id).into();
+            value["resume"] =
+                serde_json::to_value(resume_command(r.source, &r.session_id, &r.project))?;
+            Ok(value)
+        })
+        .collect()
+}
+
 pub fn print_search_results(results: &[SearchResult], limit: usize, json: bool) -> Result<()> {
     if json {
-        let limited: Vec<&SearchResult> = results.iter().take(limit).collect();
-        println!("{}", serde_json::to_string(&limited)?);
+        println!(
+            "{}",
+            serde_json::to_string(&search_results_json(results, limit)?)?
+        );
         return Ok(());
     }
 
@@ -1279,6 +1298,20 @@ mod tests {
         assert_eq!(summary.resume.cwd.as_deref(), Some("/proj"));
         assert_eq!(summary.new_session.args, vec!["claude"]);
         assert!(summary.tags.is_empty());
+    }
+
+    #[test]
+    fn search_json_adds_session_key_and_resume() {
+        let results = vec![result("s1", "/work/app"), result("s2", "/work/app")];
+        let json = search_results_json(&results, 1).unwrap();
+        assert_eq!(json.len(), 1);
+        assert_eq!(json[0]["session_id"], "s1");
+        assert_eq!(json[0]["session_key"], "claude:s1");
+        assert_eq!(
+            json[0]["resume"]["args"],
+            serde_json::json!(["claude", "--resume", "s1"])
+        );
+        assert_eq!(json[0]["resume"]["cwd"], "/work/app");
     }
 
     #[test]
