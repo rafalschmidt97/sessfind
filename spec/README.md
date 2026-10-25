@@ -24,6 +24,9 @@ _To be defined._
 - The CLI is the system boundary for frontends. Machine-readable clients first
   inspect `sessfind capabilities`, then consume additive JSON shapes from
   `sessfind-common`.
+- Credentials are redacted (`indexer::redact`) before text is chunked and when
+  native transcripts are previewed. `<data_dir>/redaction_version` records the
+  rule version; a mismatch rebuilds the Tantivy index and clears sync state.
 - Native session IDs are source-scoped. Persistent metadata and frontend state
   use `<source>:<session_id>` as the stable identity.
 

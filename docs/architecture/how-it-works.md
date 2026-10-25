@@ -3,8 +3,29 @@
 ## Indexing pipeline
 
 1. sessfind reads session files from each configured source (GitHub Copilot, Claude Code, OpenCode, Cursor, Codex).
-2. User/assistant messages are paired and split into chunks (~6000 chars each).
-3. Chunks are indexed with [tantivy](https://github.com/quickwit-oss/tantivy) full-text search.
+2. Credentials are redacted from message text and titles (see below).
+3. User/assistant messages are paired and split into chunks (~6000 chars each).
+4. Chunks are indexed with [tantivy](https://github.com/quickwit-oss/tantivy) full-text search.
+
+## Credential redaction
+
+Session transcripts often contain pasted keys, tokens echoed by tools, and
+`.env` contents. Before text reaches the index, sessfind replaces recognized
+credentials with `[REDACTED]`, so search results, `show`, the TUI preview,
+JSON output, and excerpts sent to LLM search or project summaries never repeat
+them. Native previews read from the source files are redacted the same way.
+
+Recognized formats: private key blocks, AWS access key IDs, GitHub tokens,
+OpenAI/Anthropic `sk-` keys, Slack and Stripe live tokens, JWTs, `Bearer` and
+`Authorization: Basic` values, passwords in connection URLs (scheme, user and
+host are kept), and values assigned to names ending in `password`, `secret`,
+`token`, `api_key`, `access_key`, `private_key`, or `account_key` when the
+value mixes letters and digits.
+
+Original session files are never modified, so redaction protects what sessfind
+shows, not the files on disk. When the rules change, the next run rebuilds the
+index. The semantic plugin keeps snippets for chunks it has already embedded;
+delete its data directory to rebuild those with redacted text.
 
 ## Incremental updates
 

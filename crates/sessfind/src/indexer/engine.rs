@@ -11,12 +11,24 @@ use tantivy::tokenizer::{LowerCaser, RemoveLongFilter, SimpleTokenizer, Stemmer,
 use tantivy::{DateTime as TantivyDateTime, Index, IndexWriter};
 
 use crate::indexer::chunker;
+use crate::indexer::redact::REDACTION_VERSION;
 use crate::indexer::state::{IndexState, SourceSyncState};
 use crate::models::{Chunk, SearchResult, Session, Source};
 use crate::sources::SessionSource;
 
 /// Custom tokenizer name used for the `text` field (simple + lowercase + stemmer).
 const TOKENIZER_NAME: &str = "en_stem";
+
+/// Records which redaction rules produced the stored text, next to the index.
+const REDACTION_VERSION_FILE: &str = "redaction_version";
+
+fn read_redaction_version(data_dir: &Path) -> Option<u32> {
+    std::fs::read_to_string(data_dir.join(REDACTION_VERSION_FILE))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+}
 
 fn chunk_sequence(id: &str) -> usize {
     id.rsplit(':')
@@ -114,12 +126,13 @@ impl IndexEngine {
                 !tokenizer_ok
                     || s.get_field("session_key").is_err()
                     || s.get_field("search_text").is_err()
+                    || read_redaction_version(data_dir) != Some(REDACTION_VERSION)
             };
             if needs_rebuild {
                 drop(existing);
                 std::fs::remove_dir_all(&index_path)?;
                 std::fs::create_dir_all(&index_path)?;
-                eprintln!("Recreating search index (tokenizer upgrade)…");
+                eprintln!("Recreating search index (format upgrade)…");
                 rebuilt = true;
                 Index::create_in_dir(&index_path, schema.clone())?
             } else {
@@ -128,6 +141,14 @@ impl IndexEngine {
         } else {
             Index::create_in_dir(&index_path, schema.clone())?
         };
+        // Text stored under older rules may hold credentials the current rules
+        // redact; a stale marker forces the rebuild above.
+        if read_redaction_version(data_dir) != Some(REDACTION_VERSION) {
+            std::fs::write(
+                data_dir.join(REDACTION_VERSION_FILE),
+                REDACTION_VERSION.to_string(),
+            )?;
+        }
 
         let state = IndexState::open(&data_dir.join("index_state.db"))?;
 
@@ -640,7 +661,11 @@ impl IndexEngine {
                         selected.source.as_str(),
                         selected.session_id
                     ),
-                    snippet: format!("{role}: {}", message.text),
+                    snippet: format!("{role}: {}", crate::indexer::redact::redact(&message.text)),
+                    title: selected
+                        .title
+                        .as_deref()
+                        .map(|t| crate::indexer::redact::redact(t).into_owned()),
                     timestamp: message.timestamp.unwrap_or(selected.timestamp),
                     ..selected.clone()
                 }
@@ -1145,6 +1170,66 @@ mod tests {
         let (chunks, coverage) = engine.conversation_preview(&selected);
         assert!(coverage.starts_with("Indexed fallback"));
         assert!(chunks[0].snippet.contains("old indexed text"));
+    }
+
+    #[test]
+    fn index_and_native_preview_redact_credentials() {
+        let temp = TempDir::new().unwrap();
+        let engine = IndexEngine::open(&temp.path().join("index")).unwrap();
+        let path = temp.path().join("session.jsonl");
+        std::fs::write(
+            &path,
+            "{\"type\":\"user\",\"message\":{\"content\":\"export GRAFIQ_TOKEN=a1b2c3d4e5f6g7h8\"}}\n",
+        )
+        .unwrap();
+        let mut session = test_session(Source::ClaudeCode, "secret", 1);
+        session.file_path = path.to_string_lossy().into();
+        session.title = Some("use ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789".into());
+        let source = TestSource {
+            name: "claude",
+            sessions: vec![session],
+            text: "export GRAFIQ_TOKEN=a1b2c3d4e5f6g7h8",
+        };
+        engine.index_source(&source, false).unwrap();
+
+        let selected = engine.get_session_chunks("secret").unwrap().remove(0);
+        assert!(!selected.snippet.contains("a1b2c3d4e5f6g7h8"));
+        assert!(selected.snippet.contains("GRAFIQ_TOKEN=[REDACTED]"));
+        assert_eq!(selected.title.as_deref(), Some("use [REDACTED]"));
+        let params = SearchParams {
+            query: "a1b2c3d4e5f6g7h8".into(),
+            limit: 10,
+            source: None,
+            project: None,
+            after: None,
+            before: None,
+        };
+        assert!(engine.search(&params).unwrap().is_empty());
+
+        let (chunks, coverage) = engine.conversation_preview(&selected);
+        assert!(coverage.starts_with("Native"));
+        assert_eq!(chunks[0].snippet, "USER: export GRAFIQ_TOKEN=[REDACTED]");
+    }
+
+    #[test]
+    fn stale_redaction_version_rebuilds_index() {
+        let temp = TempDir::new().unwrap();
+        {
+            let engine = IndexEngine::open(temp.path()).unwrap();
+            let source = TestSource {
+                name: "claude",
+                sessions: vec![test_session(Source::ClaudeCode, "one", 1)],
+                text: "indexed conversation",
+            };
+            engine.index_source(&source, false).unwrap();
+        }
+        assert!(!IndexEngine::open(temp.path()).unwrap().requires_reindex());
+
+        std::fs::remove_file(temp.path().join(REDACTION_VERSION_FILE)).unwrap();
+        let rebuilt = IndexEngine::open(temp.path()).unwrap();
+        assert!(rebuilt.requires_reindex());
+        assert_eq!(rebuilt.session_count(None).unwrap(), 0);
+        assert_eq!(read_redaction_version(temp.path()), Some(REDACTION_VERSION));
     }
 
     #[test]

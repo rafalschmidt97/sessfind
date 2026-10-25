@@ -1,4 +1,5 @@
 use crate::config::{CHUNK_MAX_CHARS, CHUNK_MIN_CHARS};
+use crate::indexer::redact::redact;
 use crate::models::{Chunk, Message, Role, Session};
 
 pub fn chunk_session(session: &Session, messages: &[Message]) -> Vec<Chunk> {
@@ -14,7 +15,7 @@ pub fn chunk_session(session: &Session, messages: &[Message]) -> Vec<Chunk> {
 
         if let Some(u) = user_msg {
             pair_text.push_str("USER: ");
-            pair_text.push_str(&u.text);
+            pair_text.push_str(&redact(&u.text));
             pair_text.push('\n');
             if let Some(ts) = u.timestamp {
                 pending_ts = ts;
@@ -23,7 +24,7 @@ pub fn chunk_session(session: &Session, messages: &[Message]) -> Vec<Chunk> {
 
         if let Some(a) = assistant_msg {
             pair_text.push_str("ASSISTANT: ");
-            pair_text.push_str(&a.text);
+            pair_text.push_str(&redact(&a.text));
             if !a.tool_names.is_empty() {
                 pair_text.push_str(&format!("\n[tools: {}]", a.tool_names.join(", ")));
             }
@@ -86,7 +87,7 @@ fn make_chunk(
         text: text.to_string(),
         project: session.project.clone(),
         timestamp,
-        title: session.title.clone(),
+        title: session.title.as_deref().map(|t| redact(t).into_owned()),
     }
 }
 

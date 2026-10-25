@@ -28,6 +28,7 @@
 - Debounced interactive filtering keeps typing and held-key editing responsive
 - Claude/OpenCode previews read native conversation text, including queued Claude prompts; unavailable sources show an explicitly labelled indexed fallback
 - **VS Code extension** — browse, search, tag and resume sessions from a sidebar hub ([details](docs/usage/vscode.md))
+- **Credential redaction** — API keys, tokens, passwords and private keys are replaced with `[REDACTED]` before indexing and in previews; source files are untouched ([details](docs/architecture/how-it-works.md#credential-redaction))
 - Fuzzy substring matching as alternative search mode
 - **Semantic search** — find conceptually similar sessions using ML embeddings (optional plugin)
 - **LLM search** — agentic search using installed AI CLI tools (Claude Code, OpenCode, Copilot)
@@ -92,8 +93,9 @@ must wait for a complete refresh. See [Quick Start docs](https://letsdev-it.gith
 Indexes, tags, and custom names stay local. Explicit LLM search sends the search
 intent to the selected installed AI CLI. Project summarization is available
 only from the CLI and sends session titles and excerpts from up to five recent
-conversations after printing a disclosure. Provider billing and limits remain
-authoritative.
+conversations after printing a disclosure. Recognized credentials are redacted
+from everything sessfind indexes, displays, or sends. Provider billing and
+limits remain authoritative.
 
 ## Documentation
 

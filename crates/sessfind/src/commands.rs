@@ -36,6 +36,7 @@ const FEATURES: &[&str] = &[
     "source-freshness",
     "catalog-reconciliation",
     "session-grouped-search",
+    "credential-redaction",
 ];
 
 pub fn session_summary(r: &SearchResult) -> SessionSummary {
