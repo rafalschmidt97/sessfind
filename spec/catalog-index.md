@@ -29,6 +29,17 @@ documents and sorts numeric chunk suffixes, including beyond 1,000 chunks.
 
 ## Reconciliation
 
+OpenCode schema discovery supports legacy `session` / `message` / `part` and
+V2 `session_v2` / `session_message` tables in the same database. V2 owns every
+migrated ID; legacy-only IDs are merged into discovery, and both formats filter
+`parent_id IS NULL`. Unknown schemas or row-decoding failures report an error
+rather than an apparently empty source that would delete catalog entries.
+V2 messages are ordered by `seq`; only user text/files, assistant text, and
+labelled compaction summaries are conversation content. Stored files are markers,
+never blob reads. The pseudo-size fingerprint reserves bit 62 for V2 so migration
+invalidates legacy index state even if its update timestamp did not change;
+this fits SQLite's signed integer range. No manual forced re-index is needed.
+
 Claude project grouping uses explicit native `cwd`, not its lossy encoded JSONL
 parent folder. Missing cwd is displayed as unknown. TUI resume resolves the
 native session directory again even when the index is stale, requires an existing

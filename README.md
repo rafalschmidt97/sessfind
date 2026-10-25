@@ -24,6 +24,7 @@
 
 - Full-text search (BM25 ranking via tantivy), with plain multiword queries requiring every term
 - Top-level sessions only — internal subagent calls and Herdr subagent children are excluded
+- OpenCode V1 and V2 storage support, with migrated sessions deduplicated and V2 conversation previews
 - Interactive TUI with split-pane layout, real-time filtering, and session preview
 - Debounced interactive filtering keeps typing and held-key editing responsive
 - Claude/OpenCode previews read native conversation text, including queued Claude prompts; unavailable sources show an explicitly labelled indexed fallback

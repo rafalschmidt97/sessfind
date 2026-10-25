@@ -77,7 +77,12 @@ For Claude and OpenCode, the preview reads conversation text from the native
 JSONL file or SQLite database when a session is selected. It does not reconstruct
 the conversation from overlapping search chunks. Claude queued user prompts are
 included and deduplicated by message identity; sidechain records are marked.
-OpenCode text parts use message order with stable part ordering.
+OpenCode V1 text parts use message order with stable part ordering. V2 reads
+user text and assistant text blocks from `session_message` in `seq` order;
+compaction summaries are labelled. Model/agent switches, idle events, tool
+results, and reasoning are not conversation text. When an ID exists in both
+storage formats, V2 metadata and messages take precedence without duplicate
+sessions. Legacy-only sessions remain available and child sessions stay hidden.
 
 The coverage line identifies native text or an indexed fallback. Missing or
 malformed native sources fall back to the index with a warning, so that content
